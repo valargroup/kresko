@@ -1406,7 +1406,7 @@ checksum = "4df6f98652d30167eaeea34d77b730e07c8caba6df17bd4551842b9b8da01deb"
 [[package]]
 name = "cpu-equihash-solver"
 version = "0.3.0"
-source = "git+https://github.com/valargroup/librustzcash?rev=658533c4c604818610657d9699e82102e7379c76#658533c4c604818610657d9699e82102e7379c76"
+source = "git+https://github.com/valargroup/librustzcash?rev=3694d47ebee420b7dbeea9e92e642733213354d1#3694d47ebee420b7dbeea9e92e642733213354d1"
 dependencies = [
  "blake2b_simd",
  "cc",
@@ -2507,19 +2507,6 @@ name = "gimli"
 version = "0.32.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
-
-[[package]]
-name = "git2"
-version = "0.20.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b88256088d75a56f8ecfa070513a775dd9107f6530ef14919dac831af9cfe2b"
-dependencies = [
- "bitflags",
- "libc",
- "libgit2-sys",
- "log",
- "url",
-]
 
 [[package]]
 name = "glob"
@@ -3824,18 +3811,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
-name = "libgit2-sys"
-version = "0.18.3+1.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9b3acc4b91781bb0b3386669d325163746af5f6e4f73e6d2d630e09a35f3487"
-dependencies = [
- "cc",
- "libc",
- "libz-sys",
- "pkg-config",
-]
-
-[[package]]
 name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3881,7 +3856,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc3a226e576f50782b3305c5ccf458698f92798987f551c6a02efe8276721e22"
 dependencies = [
  "cc",
- "libc",
  "pkg-config",
  "vcpkg",
 ]
@@ -4720,9 +4694,9 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "opentelemetry"
-version = "0.31.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b84bcd6ae87133e903af7ef497404dda70c60d0ea14895fc8a5e6722754fc2a0"
+checksum = "b0142c63252a9e054e68a4c61a5778f7b14f576274d593f8ce883d191a099682"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -4734,22 +4708,22 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry-http"
-version = "0.31.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7a6d09a73194e6b66df7c8f1b680f156d916a1a942abf2de06823dd02b7855d"
+checksum = "5683015d09e2df236ef005b17f6f196f0d5f6313c4fa43a7b6a53b52776e4331"
 dependencies = [
  "async-trait",
  "bytes",
  "http 1.4.0",
  "opentelemetry",
- "reqwest 0.12.28",
+ "reqwest 0.13.3",
 ]
 
 [[package]]
 name = "opentelemetry-otlp"
-version = "0.31.1"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f69cd6acbb9af919df949cd1ec9e5e7fdc2ef15d234b6b795aaa525cc02f71f"
+checksum = "9966929966d17620d7c316c643ba62631826e10021409357772d5eea84f62c35"
 dependencies = [
  "http 1.4.0",
  "opentelemetry",
@@ -4757,35 +4731,33 @@ dependencies = [
  "opentelemetry-proto",
  "opentelemetry_sdk",
  "prost",
- "reqwest 0.12.28",
+ "reqwest 0.13.3",
  "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
 name = "opentelemetry-proto"
-version = "0.31.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7175df06de5eaee9909d4805a3d07e28bb752c34cab57fa9cff549da596b30f"
+checksum = "56d658ba1faf63f7b9c492cfbe6e0ec365440a16132d3270c1065f7b33f1b638"
 dependencies = [
  "opentelemetry",
  "opentelemetry_sdk",
  "prost",
- "tonic",
- "tonic-prost",
 ]
 
 [[package]]
 name = "opentelemetry_sdk"
-version = "0.31.0"
+version = "0.32.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e14ae4f5991976fd48df6d843de219ca6d31b01daaab2dad5af2badeded372bd"
+checksum = "9b59f80e1ac4d5ff7a2db8fb6c80badb7f0f3f858211fba08dd9aaec750894f9"
 dependencies = [
  "futures-channel",
  "futures-executor",
  "futures-util",
  "opentelemetry",
  "percent-encoding",
+ "portable-atomic",
  "rand 0.9.2",
  "thiserror 2.0.18",
  "tokio",
@@ -7592,9 +7564,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-opentelemetry"
-version = "0.32.1"
+version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ac28f2d093c6c477eaa76b23525478f38de514fa9aeb1285738d4b97a9552fc"
+checksum = "adbc64cba7137545b8044cb1fe9814f7aacf3c6b5f9b45be8bb5db538befdb26"
 dependencies = [
  "js-sys",
  "opentelemetry",
@@ -7844,14 +7816,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "vergen-git2"
+name = "vergen-gitcl"
 version = "9.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d51ab55ddf1188c8d679f349775362b0fa9e90bd7a4ac69838b2a087623f0d57"
+checksum = "77ff3b5300a085d6bcd8fc96a507f706a28ae3814693236c9b409db71a1d15b9"
 dependencies = [
  "anyhow",
  "derive_builder",
- "git2",
  "rustversion",
  "time",
  "vergen",
@@ -8678,8 +8649,8 @@ checksum = "2164e798d9e3d84ee2c91139ace54638059a3b23e361f5c11781c2c6459bde0f"
 
 [[package]]
 name = "zakura"
-version = "1.1.1"
-source = "git+https://github.com/zakura-core/zakura?rev=4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6#4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6"
+version = "1.2.0"
+source = "git+https://github.com/zakura-core/zakura?rev=43c289c944bd5c1ff2c38183ed726773d350daf1#43c289c944bd5c1ff2c38183ed726773d350daf1"
 dependencies = [
  "abscissa_core",
  "bytes",
@@ -8732,9 +8703,10 @@ dependencies = [
  "tracing-futures",
  "tracing-opentelemetry",
  "tracing-subscriber",
- "vergen-git2",
+ "vergen-gitcl",
  "zakura-chain",
  "zakura-consensus",
+ "zakura-header-chain",
  "zakura-jsonl-trace",
  "zakura-network",
  "zakura-node-services",
@@ -8746,8 +8718,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-chain"
-version = "5.0.0"
-source = "git+https://github.com/zakura-core/zakura?rev=4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6#4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6"
+version = "6.0.0"
+source = "git+https://github.com/zakura-core/zakura?rev=43c289c944bd5c1ff2c38183ed726773d350daf1#43c289c944bd5c1ff2c38183ed726773d350daf1"
 dependencies = [
  "bech32",
  "bitflags",
@@ -8810,8 +8782,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-consensus"
-version = "6.0.0"
-source = "git+https://github.com/zakura-core/zakura?rev=4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6#4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6"
+version = "7.0.0"
+source = "git+https://github.com/zakura-core/zakura?rev=43c289c944bd5c1ff2c38183ed726773d350daf1#43c289c944bd5c1ff2c38183ed726773d350daf1"
 dependencies = [
  "bellman",
  "blake2b_simd",
@@ -8839,6 +8811,7 @@ dependencies = [
  "tracing",
  "tracing-futures",
  "zakura-chain",
+ "zakura-header-chain",
  "zakura-node-services",
  "zakura-script",
  "zakura-state",
@@ -8852,9 +8825,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "zakura-header-chain"
+version = "1.0.0-rc0"
+source = "git+https://github.com/zakura-core/zakura?rev=43c289c944bd5c1ff2c38183ed726773d350daf1#43c289c944bd5c1ff2c38183ed726773d350daf1"
+dependencies = [
+ "chrono",
+ "rayon",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "zakura-chain",
+]
+
+[[package]]
 name = "zakura-jsonl-trace"
 version = "1.1.0"
-source = "git+https://github.com/zakura-core/zakura?rev=4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6#4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6"
+source = "git+https://github.com/zakura-core/zakura?rev=43c289c944bd5c1ff2c38183ed726773d350daf1#43c289c944bd5c1ff2c38183ed726773d350daf1"
 dependencies = [
  "chrono",
  "serde",
@@ -8866,8 +8851,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-network"
-version = "6.0.0"
-source = "git+https://github.com/zakura-core/zakura?rev=4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6#4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6"
+version = "7.0.0"
+source = "git+https://github.com/zakura-core/zakura?rev=43c289c944bd5c1ff2c38183ed726773d350daf1#43c289c944bd5c1ff2c38183ed726773d350daf1"
 dependencies = [
  "bitflags",
  "blake2b_simd",
@@ -8902,13 +8887,15 @@ dependencies = [
  "tracing-error",
  "tracing-futures",
  "zakura-chain",
+ "zakura-header-chain",
  "zakura-jsonl-trace",
+ "zakura-node-services",
 ]
 
 [[package]]
 name = "zakura-node-services"
-version = "3.1.0"
-source = "git+https://github.com/zakura-core/zakura?rev=4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6#4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6"
+version = "3.2.1"
+source = "git+https://github.com/zakura-core/zakura?rev=43c289c944bd5c1ff2c38183ed726773d350daf1#43c289c944bd5c1ff2c38183ed726773d350daf1"
 dependencies = [
  "color-eyre",
  "jsonrpsee-types",
@@ -8918,16 +8905,18 @@ dependencies = [
  "tokio",
  "tower 0.4.13",
  "zakura-chain",
+ "zakura-header-chain",
 ]
 
 [[package]]
 name = "zakura-rpc"
-version = "7.0.0"
-source = "git+https://github.com/zakura-core/zakura?rev=4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6#4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6"
+version = "8.0.0"
+source = "git+https://github.com/zakura-core/zakura?rev=43c289c944bd5c1ff2c38183ed726773d350daf1#43c289c944bd5c1ff2c38183ed726773d350daf1"
 dependencies = [
  "base64",
  "chrono",
  "color-eyre",
+ "der 0.7.10",
  "derive-getters",
  "derive-new",
  "futures",
@@ -8984,8 +8973,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-script"
-version = "3.1.0"
-source = "git+https://github.com/zakura-core/zakura?rev=4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6#4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6"
+version = "3.2.1"
+source = "git+https://github.com/zakura-core/zakura?rev=43c289c944bd5c1ff2c38183ed726773d350daf1#43c289c944bd5c1ff2c38183ed726773d350daf1"
 dependencies = [
  "libzcash_script",
  "rand 0.8.5",
@@ -8997,8 +8986,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-state"
-version = "6.1.0"
-source = "git+https://github.com/zakura-core/zakura?rev=4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6#4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6"
+version = "7.0.0"
+source = "git+https://github.com/zakura-core/zakura?rev=43c289c944bd5c1ff2c38183ed726773d350daf1#43c289c944bd5c1ff2c38183ed726773d350daf1"
 dependencies = [
  "bincode",
  "chrono",
@@ -9032,6 +9021,7 @@ dependencies = [
  "tower 0.4.13",
  "tracing",
  "zakura-chain",
+ "zakura-header-chain",
  "zakura-jsonl-trace",
  "zakura-node-services",
 ]
@@ -9039,7 +9029,7 @@ dependencies = [
 [[package]]
 name = "zakura-tower-batch-control"
 version = "1.2.0"
-source = "git+https://github.com/zakura-core/zakura?rev=4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6#4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6"
+source = "git+https://github.com/zakura-core/zakura?rev=43c289c944bd5c1ff2c38183ed726773d350daf1#43c289c944bd5c1ff2c38183ed726773d350daf1"
 dependencies = [
  "futures",
  "futures-core",
@@ -9055,7 +9045,7 @@ dependencies = [
 [[package]]
 name = "zakura-tower-fallback"
 version = "1.2.0"
-source = "git+https://github.com/zakura-core/zakura?rev=4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6#4f3dbaf38f5518a2c8599b24374c0b73ba9f3ae6"
+source = "git+https://github.com/zakura-core/zakura?rev=43c289c944bd5c1ff2c38183ed726773d350daf1#43c289c944bd5c1ff2c38183ed726773d350daf1"
 dependencies = [
  "futures-core",
  "pin-project",
