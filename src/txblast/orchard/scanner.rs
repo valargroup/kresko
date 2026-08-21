@@ -407,6 +407,8 @@ async fn scan_block(
         }
 
         for (action_idx, cm_x) in shielded_data.note_commitments().enumerate() {
+            // `cm_x` is a zebra-chain field element. The bytes then cross to
+            // kresko's own Orchard stack, which is on an older `ff`.
             let cmx_bytes = cm_x.to_repr();
             let hash = MerkleHashOrchard::from_bytes(&cmx_bytes)
                 .expect("note commitment should be a valid MerkleHashOrchard");
