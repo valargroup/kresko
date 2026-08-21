@@ -245,6 +245,15 @@ enum Commands {
         /// tip change instead of waiting for a full template.
         #[arg(long)]
         mine_provisional_empty_templates: bool,
+
+        /// Submit the solved header through `submitsolution` instead of sending
+        /// the whole block through `submitblock`.
+        ///
+        /// The node already verified the candidate when it issued the template,
+        /// so the miner only names it and supplies the solved header. The miner
+        /// resends the full block whenever the node cannot use the compact form.
+        #[arg(long)]
+        compact_submission: bool,
     },
 
     /// Monte Carlo-simulate PoW block production for calibration validation
@@ -1291,6 +1300,7 @@ async fn main() -> Result<()> {
             submit_stale_solutions,
             template_refresh_seconds,
             mine_provisional_empty_templates,
+            compact_submission,
         } => {
             commands::mine::run_with(
                 &rpc_endpoint,
@@ -1300,6 +1310,7 @@ async fn main() -> Result<()> {
                     template_refresh_interval: (template_refresh_seconds > 0)
                         .then(|| std::time::Duration::from_secs(template_refresh_seconds)),
                     mine_provisional_empty_templates,
+                    compact_submission,
                     ..Default::default()
                 },
             )

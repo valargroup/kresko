@@ -76,9 +76,24 @@ struct TemplateRefreshPolicy {
 struct RawTemplateBlock {
     header: Header,
     transactions: Vec<Vec<u8>>,
+
+    /// The prepared candidate identifier from `getblocktemplate`.
+    ///
+    /// `submitsolution` needs it. A node that predates the method omits it, and
+    /// the miner then submits the whole block.
+    work_id: Option<String>,
 }
 
 impl RawTemplateBlock {
+    /// Serializes the solved header alone, which is all `submitsolution` sends.
+    fn serialize_header(header: &Header) -> Result<Vec<u8>> {
+        let mut header_bytes = Vec::new();
+        header
+            .zcash_serialize(&mut header_bytes)
+            .context("failed to serialize solved header")?;
+        Ok(header_bytes)
+    }
+
     fn serialize_with_header(&self, header: &Header) -> Result<Vec<u8>> {
         let mut block_bytes = Vec::new();
         header
@@ -155,6 +170,15 @@ pub struct MinerOptions {
 
     /// Stop after this many solver runs. `None` mines until the process exits.
     pub max_runs: Option<u64>,
+
+    /// Submit a solved header through `submitsolution` instead of sending the
+    /// whole block through `submitblock`.
+    ///
+    /// The node already holds the prepared candidate, so the miner only needs to
+    /// name it and supply the solved header. That drops roughly 2 MB of
+    /// serialization from each submission. The miner falls back to `submitblock`
+    /// whenever the node cannot use the compact form.
+    pub compact_submission: bool,
 }
 
 impl Default for MinerOptions {
@@ -166,6 +190,7 @@ impl Default for MinerOptions {
             template_refresh_interval: Some(Duration::from_secs(60)),
             mine_provisional_empty_templates: false,
             max_runs: None,
+            compact_submission: false,
         }
     }
 }
@@ -359,6 +384,10 @@ pub async fn run_with(
                     .serialize_with_header(&solved_header)
                     .context("failed to serialize solved block")?;
                 let block_hex = hex::encode(&block_bytes);
+                let header_hex = hex::encode(
+                    RawTemplateBlock::serialize_header(&solved_header)
+                        .context("failed to serialize solved header")?,
+                );
 
                 // Check immediately before submission. A tip change can race
                 // with the solver's final digit-boundary callback.
@@ -425,7 +454,16 @@ pub async fn run_with(
                     continue 'mine;
                 }
 
-                match submit_block(&client, rpc_endpoint, &block_hex).await {
+                match submit_solved(
+                    &client,
+                    rpc_endpoint,
+                    &options,
+                    block.work_id.as_deref(),
+                    &header_hex,
+                    &block_hex,
+                )
+                .await
+                {
                     Ok(result) => {
                         let result_str = if result.is_null() {
                             None
@@ -842,6 +880,78 @@ async fn get_block_template(
         .context("missing result in getblocktemplate response")
 }
 
+/// Submits a solved block, preferring the compact form when it is available.
+///
+/// `submitsolution` sends the work id and the solved header instead of the whole
+/// block. The node rebuilds the block from the prepared candidate it already
+/// verified when it issued the template.
+///
+/// The node answers `stale-work` when it has dropped that candidate, and
+/// `candidate-mismatch` when the solved header changed a field the candidate
+/// fixed. Both mean the compact form cannot describe this block, so the miner
+/// resends it in full. A transport failure falls back the same way, because the
+/// node may never have seen the request.
+async fn submit_solved(
+    client: &reqwest::Client,
+    endpoint: &str,
+    options: &MinerOptions,
+    work_id: Option<&str>,
+    header_hex: &str,
+    block_hex: &str,
+) -> Result<serde_json::Value> {
+    if options.compact_submission {
+        match work_id {
+            Some(work_id) => match submit_solution(client, endpoint, work_id, header_hex).await {
+                Ok(result) => {
+                    let needs_full_block = result
+                        .as_str()
+                        .is_some_and(|s| s == "stale-work" || s == "candidate-mismatch");
+                    if !needs_full_block {
+                        return Ok(result);
+                    }
+                    eprintln!("submitsolution returned {result}; resending the full block");
+                }
+                Err(e) => eprintln!("submitsolution failed: {e}; resending the full block"),
+            },
+            None => eprintln!("template carried no workid; sending the full block"),
+        }
+    }
+
+    submit_block(client, endpoint, block_hex).await
+}
+
+async fn submit_solution(
+    client: &reqwest::Client,
+    endpoint: &str,
+    work_id: &str,
+    header_hex: &str,
+) -> Result<serde_json::Value> {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": "kresko-mine",
+        "method": "submitsolution",
+        "params": [{"workid": work_id, "header": header_hex}],
+    });
+
+    let resp = client
+        .post(endpoint)
+        .json(&body)
+        .send()
+        .await
+        .context("submitsolution request failed")?;
+
+    let payload: serde_json::Value = resp.json().await.context("failed to parse RPC response")?;
+
+    if let Some(err) = payload.get("error").filter(|v| !v.is_null()) {
+        anyhow::bail!("submitsolution RPC error: {err}");
+    }
+
+    Ok(payload
+        .get("result")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null))
+}
+
 async fn submit_block(
     client: &reqwest::Client,
     endpoint: &str,
@@ -983,9 +1093,12 @@ fn block_from_template(template: &serde_json::Value) -> Result<RawTemplateBlock>
         solution: Solution::for_proposal(),
     };
 
+    let work_id = template["workid"].as_str().map(String::from);
+
     Ok(RawTemplateBlock {
         header,
         transactions,
+        work_id,
     })
 }
 

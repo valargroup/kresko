@@ -90,6 +90,7 @@ KRESKO_RPC_URL=$KRESKO_RPC_URL
 KRESKO_RPC_PORT=$KRESKO_RPC_PORT
 KRESKO_NETWORK_KIND=$KRESKO_NETWORK_KIND
 KRESKO_MINING_MODE=$KRESKO_MINING_MODE
+KRESKO_MINE_ARGS=${KRESKO_MINE_ARGS:-}
 KRESKO_ENV_EOF
 chmod 0644 /root/.kresko/env
 
@@ -531,7 +532,10 @@ for attempt in $(seq 1 120); do
         "$KRESKO_RPC_URL" 2>&1 || true)
     if printf '%s' "$rpc_response" | jq -e '.error == null and .result != null' >/dev/null 2>&1; then
         echo "=== RPC ready, starting kresko mine ==="
-        exec kresko mine --rpc-endpoint "http://localhost:${KRESKO_RPC_PORT}"
+        # Deliberately unquoted: KRESKO_MINE_ARGS carries zero or more flags
+        # and must word-split. An experiment sets it through vars.sh.
+        # shellcheck disable=SC2086
+        exec kresko mine --rpc-endpoint "http://localhost:${KRESKO_RPC_PORT}" ${KRESKO_MINE_ARGS:-}
     fi
     sleep 2
 done
