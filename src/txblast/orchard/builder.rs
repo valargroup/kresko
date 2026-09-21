@@ -1,11 +1,10 @@
 use std::time::Instant;
 
-use orchard::builder::BundleType as OrchardBundleType;
 use anyhow::{Context, Result};
 use orchard::keys::{FullViewingKey, Scope, SpendAuthorizingKey, SpendingKey};
 use orchard::note_encryption::OrchardDomain;
 use zcash_note_encryption::try_output_recovery_with_ovk;
-use zcash_primitives::transaction::builder::{BuildConfig, Builder};
+use zcash_primitives::transaction::builder::{BuildConfig, Builder, BundlePadding};
 use zcash_primitives::transaction::fees::zip317;
 use zcash_protocol::consensus::BlockHeight;
 use zcash_protocol::memo::MemoBytes;
@@ -47,12 +46,9 @@ impl ShieldedPool {
     /// The pool the chain accepts new value into at `height`. Orchard is closed
     /// to new value after NU6.3; Ironwood opens at NU6.3. Works for any network
     /// via its NU6.3 activation height.
-    pub(crate) fn at_height(
-        network_params: &TxblastNetworkParams,
-        height: BlockHeight,
-    ) -> Self {
-        use zcash_protocol::consensus::Parameters;
+    pub(crate) fn at_height(network_params: &TxblastNetworkParams, height: BlockHeight) -> Self {
         use zcash_protocol::consensus::NetworkUpgrade::Nu6_3;
+        use zcash_protocol::consensus::Parameters;
         match network_params.activation_height(Nu6_3) {
             Some(nu6_3) if height >= nu6_3 => ShieldedPool::Ironwood,
             _ => ShieldedPool::Orchard,
@@ -76,13 +72,15 @@ impl ShieldedPool {
                 sapling_anchor: None,
                 orchard_anchor: Some(anchor),
                 ironwood_anchor: None,
-                orchard_pool_bundle_type: OrchardBundleType::DEFAULT,
+                orchard_padding: BundlePadding::DEFAULT,
+                ironwood_padding: BundlePadding::DEFAULT,
             },
             ShieldedPool::Ironwood => BuildConfig::Standard {
                 sapling_anchor: None,
                 orchard_anchor: None,
                 ironwood_anchor: Some(anchor),
-                orchard_pool_bundle_type: OrchardBundleType::DEFAULT,
+                orchard_padding: BundlePadding::DEFAULT,
+                ironwood_padding: BundlePadding::DEFAULT,
             },
         }
     }
@@ -127,7 +125,13 @@ impl ShieldedPool {
     ) -> Result<()> {
         match self {
             ShieldedPool::Orchard => builder
-                .add_orchard_change_output::<zip317::FeeError>(fvk, Some(ovk), recipient, value, memo)
+                .add_orchard_change_output::<zip317::FeeError>(
+                    fvk,
+                    Some(ovk),
+                    recipient,
+                    value,
+                    memo,
+                )
                 .map_err(|e| anyhow::anyhow!("add_orchard_change_output: {e}")),
             ShieldedPool::Ironwood => builder
                 .add_ironwood_output::<zip317::FeeError>(Some(ovk), recipient, value, memo)
@@ -213,7 +217,7 @@ impl sapling_crypto::prover::SpendProver for NoSaplingSpendProver {
         unreachable!("no Sapling spends in shielded txblast")
     }
 
-    fn create_proof<R: rand_core_06::RngCore>(
+    fn create_proof<R: rand_core_10::Rng>(
         &self,
         _: sapling_crypto::circuit::Spend,
         _: &mut R,
@@ -241,7 +245,7 @@ impl sapling_crypto::prover::OutputProver for NoSaplingOutputProver {
         unreachable!("no Sapling outputs in shielded txblast")
     }
 
-    fn create_proof<R: rand_core_06::RngCore>(
+    fn create_proof<R: rand_core_10::Rng>(
         &self,
         _: sapling_crypto::circuit::Output,
         _: &mut R,
@@ -550,7 +554,14 @@ pub(crate) async fn build_and_send_shielding_tx_multi(
     }
 
     for output in outputs {
-            pool.add_output(&mut builder, keys.fvk.clone(), keys.ovk.clone(), keys.address, Zatoshis::from_u64(output.value).context("invalid orchard output amount")?, memo_for_role(output.role))?;
+        pool.add_output(
+            &mut builder,
+            keys.fvk.clone(),
+            keys.ovk.clone(),
+            keys.address,
+            Zatoshis::from_u64(output.value).context("invalid orchard output amount")?,
+            memo_for_role(output.role),
+        )?;
     }
 
     let mut signing_set = TransparentSigningSet::new();
@@ -566,7 +577,7 @@ pub(crate) async fn build_and_send_shielding_tx_multi(
             // spend authorizing key even though this transaction spends no
             // Orchard notes -- without it the bundle fails as MissingSignatures.
             &[keys.sak.clone()],
-            rand_core_06::OsRng,
+            rand_core_10::UnwrapErr(getrandom_04::SysRng),
             &NoSaplingSpendProver,
             &NoSaplingOutputProver,
             &fee_rule,
@@ -657,7 +668,7 @@ pub(crate) async fn build_and_send_orchard_to_transparent_tx(
             &signing_set,
             &[],
             &[keys.sak.clone()],
-            rand_core_06::OsRng,
+            rand_core_10::UnwrapErr(getrandom_04::SysRng),
             &NoSaplingSpendProver,
             &NoSaplingOutputProver,
             &fee_rule,
@@ -716,7 +727,14 @@ pub(crate) async fn build_and_send_orchard_to_transparent_with_change_tx(
 
     if let Some(role) = change_role {
         if change_value > 0 {
-                pool.add_output(&mut builder, keys.fvk.clone(), keys.ovk.clone(), keys.address, Zatoshis::from_u64(change_value).context("invalid orchard change amount")?, memo_for_role(role))?;
+            pool.add_output(
+                &mut builder,
+                keys.fvk.clone(),
+                keys.ovk.clone(),
+                keys.address,
+                Zatoshis::from_u64(change_value).context("invalid orchard change amount")?,
+                memo_for_role(role),
+            )?;
         }
     }
 
@@ -727,7 +745,7 @@ pub(crate) async fn build_and_send_orchard_to_transparent_with_change_tx(
             &signing_set,
             &[],
             &[keys.sak.clone()],
-            rand_core_06::OsRng,
+            rand_core_10::UnwrapErr(getrandom_04::SysRng),
             &NoSaplingSpendProver,
             &NoSaplingOutputProver,
             &fee_rule,
@@ -775,7 +793,14 @@ pub(crate) async fn build_and_send_orchard_fanout_tx(
     pool.add_spend(&mut builder, keys.fvk.clone(), tracked.note, merkle_path)?;
 
     for (address, output) in recipients {
-            pool.add_output(&mut builder, keys.fvk.clone(), keys.ovk.clone(), *address, Zatoshis::from_u64(output.value).context("invalid orchard output amount")?, memo_for_role(output.role))?;
+        pool.add_output(
+            &mut builder,
+            keys.fvk.clone(),
+            keys.ovk.clone(),
+            *address,
+            Zatoshis::from_u64(output.value).context("invalid orchard output amount")?,
+            memo_for_role(output.role),
+        )?;
     }
 
     let signing_set = TransparentSigningSet::new();
@@ -786,7 +811,7 @@ pub(crate) async fn build_and_send_orchard_fanout_tx(
             &signing_set,
             &[],
             &[keys.sak.clone()],
-            rand_core_06::OsRng,
+            rand_core_10::UnwrapErr(getrandom_04::SysRng),
             &NoSaplingSpendProver,
             &NoSaplingOutputProver,
             &fee_rule,
@@ -827,7 +852,14 @@ pub(crate) fn build_lane_advance_tx(
     let mut builder = Builder::new(network_params, height, build_config);
 
     pool.add_spend(&mut builder, keys.fvk.clone(), tracked.note, merkle_path)?;
-        pool.add_output(&mut builder, keys.fvk.clone(), keys.ovk.clone(), keys.address, Zatoshis::from_u64(note_value - fee).context("invalid orchard lane amount")?, memo_for_role(NoteRole::Lane))?;
+    pool.add_output(
+        &mut builder,
+        keys.fvk.clone(),
+        keys.ovk.clone(),
+        keys.address,
+        Zatoshis::from_u64(note_value - fee).context("invalid orchard lane amount")?,
+        memo_for_role(NoteRole::Lane),
+    )?;
 
     let signing_set = TransparentSigningSet::new();
     let fee_rule = zip317::FeeRule::standard();
@@ -837,7 +869,7 @@ pub(crate) fn build_lane_advance_tx(
             &signing_set,
             &[],
             &[keys.sak.clone()],
-            rand_core_06::OsRng,
+            rand_core_10::UnwrapErr(getrandom_04::SysRng),
             &NoSaplingSpendProver,
             &NoSaplingOutputProver,
             &fee_rule,
@@ -883,7 +915,14 @@ pub(crate) async fn build_and_send_lane_advance_tx(
     let mut builder = Builder::new(network_params, height, build_config);
 
     pool.add_spend(&mut builder, keys.fvk.clone(), tracked.note, merkle_path)?;
-        pool.add_output(&mut builder, keys.fvk.clone(), keys.ovk.clone(), keys.address, Zatoshis::from_u64(note_value - fee).context("invalid orchard lane amount")?, memo_for_role(NoteRole::Lane))?;
+    pool.add_output(
+        &mut builder,
+        keys.fvk.clone(),
+        keys.ovk.clone(),
+        keys.address,
+        Zatoshis::from_u64(note_value - fee).context("invalid orchard lane amount")?,
+        memo_for_role(NoteRole::Lane),
+    )?;
 
     let signing_set = TransparentSigningSet::new();
     let fee_rule = zip317::FeeRule::standard();
@@ -893,7 +932,7 @@ pub(crate) async fn build_and_send_lane_advance_tx(
             &signing_set,
             &[],
             &[keys.sak.clone()],
-            rand_core_06::OsRng,
+            rand_core_10::UnwrapErr(getrandom_04::SysRng),
             &NoSaplingSpendProver,
             &NoSaplingOutputProver,
             &fee_rule,
@@ -957,7 +996,14 @@ pub(crate) async fn build_and_send_reservoir_expand_tx(
     pool.add_spend(&mut builder, keys.fvk.clone(), tracked.note, merkle_path)?;
 
     for output in &planned_outputs {
-            pool.add_output(&mut builder, keys.fvk.clone(), keys.ovk.clone(), keys.address, Zatoshis::from_u64(output.value).context("invalid orchard output amount")?, memo_for_role(output.role))?;
+        pool.add_output(
+            &mut builder,
+            keys.fvk.clone(),
+            keys.ovk.clone(),
+            keys.address,
+            Zatoshis::from_u64(output.value).context("invalid orchard output amount")?,
+            memo_for_role(output.role),
+        )?;
     }
 
     let signing_set = TransparentSigningSet::new();
@@ -968,7 +1014,7 @@ pub(crate) async fn build_and_send_reservoir_expand_tx(
             &signing_set,
             &[],
             &[keys.sak.clone()],
-            rand_core_06::OsRng,
+            rand_core_10::UnwrapErr(getrandom_04::SysRng),
             &NoSaplingSpendProver,
             &NoSaplingOutputProver,
             &fee_rule,

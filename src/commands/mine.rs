@@ -1358,6 +1358,7 @@ mod tests {
             log_path: std::env::temp_dir().join(format!("kresko-{name}.jsonl")),
             submit_stale_solutions,
             template_refresh_interval: None,
+            compact_submission: false,
             mine_provisional_empty_templates: false,
             max_runs: Some(1),
         }

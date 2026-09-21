@@ -16,6 +16,17 @@ use crate::pow_tuning::{self, PowCalibration, PowTuningInputs};
 use crate::zebra_config::{self, LocalTestnetParameters};
 
 const DEFAULT_TARGET_SPACING_SECS: u32 = 25;
+/// NU6.3's compiled post-Blossom target spacing, in seconds.
+const NU6_3_TARGET_SPACING_SECS: u32 = 75;
+
+/// Upgrades scheduled after the seeded chain, counted from the first live-mined block.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UpgradeSchedule {
+    /// Blocks from the first live-mined block to NU7 activation.
+    pub nu7_activation_offset: Option<u32>,
+    /// Blocks from the first live-mined block to the start of NSM reissuance.
+    pub nsm_reissuance_offset: Option<u32>,
+}
 
 /// PoW calibration inputs sourced from CLI flags and forwarded into the
 /// genesis pipeline.
@@ -51,6 +62,7 @@ pub fn run(
     orchard_fanout_outputs: usize,
     scripts_dir: &str,
     pow_calibration: PowCalibrationCli,
+    schedule: UpgradeSchedule,
     directory: &str,
 ) -> Result<()> {
     let dir = Path::new(directory);
@@ -120,6 +132,7 @@ pub fn run(
         target_spacing_secs,
         daa,
         seeding,
+        schedule,
     )?;
 
     config.local_genesis = Some(prepared.local_genesis.clone());
@@ -294,6 +307,9 @@ export KRESKO_LOCAL_GENESIS_DIR="/root/payload/local_genesis"
             target_spacing_secs
         ));
     }
+    if let Some(nu7) = prepared.local_testnet.nu7_activation_height {
+        vars_content.push_str(&format!("export KRESKO_NU7_ACTIVATION_HEIGHT=\"{nu7}\"\n"));
+    }
     if prepared.local_genesis.bootstrap_treasury_key.is_some() {
         vars_content.push_str(
             "export KRESKO_BOOTSTRAP_TREASURY_KEY_PATH=\"/root/payload/local_genesis/treasury_key.json\"\n",
@@ -384,7 +400,16 @@ fn prepare_generated_local_genesis(
     target_spacing_secs: u32,
     daa: DaaConfig,
     seeding: SeedingMode,
+    schedule: UpgradeSchedule,
 ) -> Result<PreparedLocalGenesis> {
+    // A scheduled NU7 leaves the seeded chain on NU6.3, whose compiled spacing
+    // is 75 s. The seed timestamps must match it, or the difficulty adjustment
+    // rejects the first live-mined block. NU7 then brings its own 25 s spacing.
+    let seed_spacing_secs = if schedule.nu7_activation_offset.is_some() {
+        NU6_3_TARGET_SPACING_SECS
+    } else {
+        target_spacing_secs
+    };
     // Seed blocks are always generated with Equihash solving off, so this is
     // cheap regardless of mode. Contextual difficulty still needs a target limit
     // that is safe for the configured DAA averaging window.
@@ -403,7 +428,7 @@ fn prepare_generated_local_genesis(
             SeedingMode::EnforcePowAfterSeededTip { .. }
         ),
         target_difficulty_limit,
-        target_spacing_secs,
+        target_spacing_secs: seed_spacing_secs,
         seeded_tip_time: None,
         maturity_padding_blocks,
         ..LocalTestnetGenesisOptions::default()
@@ -417,7 +442,20 @@ fn prepare_generated_local_genesis(
         .parameters()
         .context("generated local genesis did not produce testnet parameters")?;
     let activation_height = activation_height(&network_params, local_genesis_upgrade())?;
-    let activation_heights = activation_heights(activation_height);
+    let mut activation_heights = activation_heights(activation_height);
+
+    // Offsets count from the first live-mined block, one past the seeded tip.
+    let first_live_height =
+        u32::try_from(generated.blocks.len()).context("seeded chain length fits in u32")?;
+    let nu7_activation_height = schedule
+        .nu7_activation_offset
+        .map(|offset| first_live_height + offset);
+    let nsm_reissuance_height = schedule
+        .nsm_reissuance_offset
+        .map(|offset| first_live_height + offset);
+    if let Some(nu7) = nu7_activation_height {
+        activation_heights.nu7 = Some(nu7);
+    }
 
     let genesis_hex = generated
         .genesis_hex()
@@ -445,7 +483,7 @@ fn prepare_generated_local_genesis(
         network_name: network_params.network_name().to_string(),
         network_magic: network_params.network_magic().0,
         target_difficulty_limit: network_params.target_difficulty_limit().to_string(),
-        target_spacing_secs: Some(target_spacing_secs),
+        target_spacing_secs: Some(seed_spacing_secs),
         disable_pow: network_params.disable_pow(),
         genesis_hash: network_params.genesis_hash().to_string(),
         seeded_tip_hash,
@@ -494,9 +532,16 @@ fn prepare_generated_local_genesis(
             // the running network has to target it too: otherwise the DAA aims
             // at the node's compiled-in 75s default and every non-75s
             // experiment silently measures a 75s chain.
-            post_blossom_pow_target_spacing: Some(target_spacing_secs),
+            // A scheduled NU7 supplies the spacing change itself, and the
+            // experiment node build has no spacing key.
+            post_blossom_pow_target_spacing: schedule
+                .nu7_activation_offset
+                .is_none()
+                .then_some(target_spacing_secs),
             daa,
             pow_start_height: network_params.pow_start_height().map(|height| height.0),
+            nu7_activation_height,
+            nsm_reissuance_height,
         },
         runtime_funded_keys: runtime_funded_keys.clone(),
         payload_local_genesis_files: vec![
@@ -773,6 +818,7 @@ mod tests {
             SeedingMode::EnforcePowAfterSeededTip {
                 target_difficulty_limit,
             },
+            UpgradeSchedule::default(),
         )
         .expect("PoW seeding should prepare a local genesis");
 
@@ -811,6 +857,67 @@ mod tests {
         );
     }
 
+    /// A scheduled NU7 keeps the seeded chain on NU6.3 at its 75 s spacing and
+    /// renders NU7 and the reissuance start relative to the first live block.
+    #[test]
+    fn scheduled_nu7_renders_offsets_from_the_first_live_block() {
+        let miner_names: Vec<String> = (0..4).map(|i| format!("miner-{i}")).collect();
+        let config = Config {
+            chain_id: "nu7-schedule-test".to_string(),
+            ..Config::default()
+        };
+        let mut target_difficulty_limit = [0u8; 32];
+        target_difficulty_limit[0] = 0x04;
+        target_difficulty_limit[1] = 0xec;
+
+        let maturity_padding_blocks = 125;
+        let prepared = prepare_generated_local_genesis(
+            &config,
+            &miner_names,
+            maturity_padding_blocks,
+            25,
+            DaaConfig::default(),
+            SeedingMode::EnforcePowAfterSeededTip {
+                target_difficulty_limit,
+            },
+            UpgradeSchedule {
+                nu7_activation_offset: Some(40),
+                nsm_reissuance_offset: Some(190),
+            },
+        )
+        .expect("a scheduled NU7 should prepare a local genesis");
+
+        let first_live = miner_names.len() as u32 + 1 + maturity_padding_blocks;
+        assert_eq!(prepared.local_testnet.pow_start_height, Some(first_live));
+        assert_eq!(
+            prepared.local_testnet.nu7_activation_height,
+            Some(first_live + 40)
+        );
+        assert_eq!(
+            prepared.local_testnet.nsm_reissuance_height,
+            Some(first_live + 190)
+        );
+        assert_eq!(prepared.local_testnet.latest_upgrade, "NU6.3");
+        assert_eq!(prepared.local_testnet.post_blossom_pow_target_spacing, None);
+        assert_eq!(
+            prepared.local_genesis.target_spacing_secs,
+            Some(NU6_3_TARGET_SPACING_SECS)
+        );
+
+        let template = zebra_config::template_for(crate::config::NetworkKind::LocalGenesis)
+            .expect("template generation");
+        let rendered =
+            zebra_config::apply_local_testnet_parameters(&template, &prepared.local_testnet)
+                .expect("rendering the node config");
+        zebra_config::verify_local_testnet_parameters(&rendered, &prepared.local_testnet)
+            .expect("the rendered config must match the generated chain");
+
+        assert!(rendered.contains(&format!("NU7 = {}", first_live + 40)));
+        assert!(rendered.contains("\"NU6.3\" = 1"));
+        assert!(rendered.contains(&format!("nsm_reissuance_height = {}", first_live + 190)));
+        assert!(!rendered.contains("post_blossom_pow_target_spacing"));
+    }
+
     /// The non-PoW path is unchanged: no start height, proof-of-work off.
     #[test]
     fn pow_disabled_seeding_renders_no_start_height() {
@@ -826,6 +933,7 @@ mod tests {
             25,
             DaaConfig::default(),
             SeedingMode::PowDisabled,
+            UpgradeSchedule::default(),
         )
         .expect("generate-mode seeding should prepare a local genesis");
 

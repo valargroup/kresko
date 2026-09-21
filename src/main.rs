@@ -82,6 +82,18 @@ enum Commands {
         #[arg(long)]
         pow_sol_per_sec: Option<f64>,
 
+        /// Schedule NU7 this many blocks after the first live-mined block. The
+        /// seeded chain stays on NU6.3 and its timestamps use NU6.3's 75 s
+        /// spacing; proof-of-work calibration still targets the configured
+        /// block time, which NU7's 25 s spacing then enforces.
+        #[arg(long)]
+        nu7_activation_offset: Option<u32>,
+
+        /// Start NSM reissuance this many blocks after the first live-mined
+        /// block, through the experiment-only `nsm_reissuance_height` node key.
+        #[arg(long, requires = "nu7_activation_offset")]
+        nsm_reissuance_offset: Option<u32>,
+
         /// Experiment directory
         #[arg(short = 'd', long, default_value = ".")]
         directory: String,
@@ -1222,8 +1234,14 @@ async fn main() -> Result<()> {
             pow_adjust,
             pow_fleet_discount,
             pow_sol_per_sec,
+            nu7_activation_offset,
+            nsm_reissuance_offset,
             directory,
         } => {
+            let schedule = commands::genesis::UpgradeSchedule {
+                nu7_activation_offset,
+                nsm_reissuance_offset,
+            };
             let pow_calibration = commands::genesis::PowCalibrationCli {
                 adjust_fraction: pow_adjust,
                 fleet_discount: pow_fleet_discount,
@@ -1240,6 +1258,7 @@ async fn main() -> Result<()> {
                 orchard_fanout_outputs,
                 &scripts_dir,
                 pow_calibration,
+                schedule,
                 &directory,
             )?;
         }

@@ -160,7 +160,12 @@ fn render_join_zebrad_config(
         .with_missing_from(DaaConfig::tuned_25s_defaults());
     let pow_start_height = payload_pow_start_height(&run_dir.join("payload/local_genesis"))?;
     let local_testnet = LocalTestnetParameters {
-        latest_upgrade: if local_genesis.activation_heights.nu7.is_some() { "NU7" } else { "NU6.1" }.to_string(),
+        latest_upgrade: if local_genesis.activation_heights.nu7.is_some() {
+            "NU7"
+        } else {
+            "NU6.1"
+        }
+        .to_string(),
         network_name: local_genesis.network_name.clone(),
         network_magic: local_genesis.network_magic,
         target_difficulty_limit: local_genesis.target_difficulty_limit.clone(),
@@ -174,6 +179,8 @@ fn render_join_zebrad_config(
         post_blossom_pow_target_spacing: None,
         daa,
         pow_start_height,
+        nu7_activation_height: None,
+        nsm_reissuance_height: None,
     };
     let observer = observer_instance();
     let active_instances = active_instances(config);

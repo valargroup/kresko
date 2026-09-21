@@ -2,10 +2,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use orchard::{
-    bundle::{BundleVersion, Flags},
-    circuit::OrchardCircuitVersion,
     Anchor,
     builder::{Builder, BundleType, UnauthorizedBundle},
+    bundle::{BundleVersion, Flags},
+    circuit::OrchardCircuitVersion,
     circuit::ProvingKey,
     keys::{FullViewingKey, Scope, SpendingKey},
     value::NoteValue,

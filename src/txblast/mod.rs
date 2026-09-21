@@ -61,19 +61,41 @@ fn upgrade_rank(nu: NetworkUpgrade) -> u8 {
         NetworkUpgrade::Nu6_1 => 7,
         NetworkUpgrade::Nu6_2 => 8,
         NetworkUpgrade::Nu6_3 => 9,
+        NetworkUpgrade::Nu7 => 10,
         // Anything this build does not name is newer than everything it does.
+        #[allow(unreachable_patterns)]
         _ => u8::MAX,
     }
 }
 
 pub(crate) fn local_genesis_latest_upgrade() -> NetworkUpgrade {
-    match std::env::var("KRESKO_LATEST_NETWORK_UPGRADE").ok().as_deref() {
+    match std::env::var("KRESKO_LATEST_NETWORK_UPGRADE")
+        .ok()
+        .as_deref()
+    {
         Some("nu5") | Some("Nu5") => NetworkUpgrade::Nu5,
         Some("nu6") | Some("Nu6") => NetworkUpgrade::Nu6,
         Some("nu6_1") | Some("Nu6_1") => NetworkUpgrade::Nu6_1,
         Some("nu6_2") | Some("Nu6_2") => NetworkUpgrade::Nu6_2,
+        Some("nu7") | Some("Nu7") => NetworkUpgrade::Nu7,
         _ => NetworkUpgrade::Nu6_3,
     }
+}
+
+/// NU7 activation height on a local-genesis chain that schedules NU7 after its
+/// seeded blocks, from `KRESKO_NU7_ACTIVATION_HEIGHT` (written by `kresko genesis
+/// --nu7-activation-offset`).
+///
+/// The builder signs with the branch id of the newest upgrade active at the
+/// target height, so this is what switches transactions to NU7's branch id at
+/// the activation block.
+pub(crate) fn local_genesis_nu7_height() -> Option<u32> {
+    static HEIGHT: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *HEIGHT.get_or_init(|| {
+        std::env::var("KRESKO_NU7_ACTIVATION_HEIGHT")
+            .ok()
+            .and_then(|height| height.trim().parse().ok())
+    })
 }
 
 impl consensus::Parameters for TxblastNetworkParams {
@@ -108,6 +130,11 @@ impl consensus::Parameters for TxblastNetworkParams {
             //
             // Same environment variable as `kresko genesis`, so the chain and
             // the builder cannot disagree.
+            Self::LocalGenesis
+                if nu == NetworkUpgrade::Nu7 && local_genesis_nu7_height().is_some() =>
+            {
+                local_genesis_nu7_height().map(BlockHeight::from_u32)
+            }
             Self::LocalGenesis
                 if upgrade_rank(nu) <= upgrade_rank(local_genesis_latest_upgrade()) =>
             {

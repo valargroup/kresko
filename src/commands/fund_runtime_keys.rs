@@ -10,14 +10,14 @@ use zcash_transparent::address::TransparentAddress;
 use zebra_chain::serialization::ZcashDeserialize;
 
 use crate::config::{LocalGenesisFundedKey, OrchardTxblastConfig};
+use crate::txblast::orchard::builder::ShieldedPool;
 use crate::txblast::orchard::{
     LaneRegistry, OrchardChainCursor, OrchardNullifierIndex, OrchardTree, OrchardTxblastTracer,
-    PendingTxKind, PlannedOutput, RuntimePhase, TreasuryInventory,
+    PendingTxKind, PlannedOutput, RuntimePhase, ShieldingInput, TreasuryInventory,
     build_and_send_orchard_to_transparent_tx, build_and_send_shielding_tx_multi,
     derive_orchard_keys, latest_checkpoint_anchor, latest_witness, orchard_to_transparent_fee,
-    scan_block_range, seed_orchard_tree_from_treestate, shielding_fee_multi, ShieldingInput,
+    scan_block_range, seed_orchard_tree_from_treestate, shielding_fee_multi,
 };
-use crate::txblast::orchard::builder::ShieldedPool;
 use crate::txblast::rpc::{AddressUtxo, ZebraRpcClient};
 use crate::txblast::transparent::{FundedKey, load_funded_key};
 use crate::txblast::{OrchardBlastRuntimeConfig, TxblastNetworkParams, TxblastTraceConfig};
@@ -489,7 +489,9 @@ async fn fund_runtime_keys_local(
     {
         Ok(status) => Ok(status),
         Err(error) => {
-            println!("[fund-runtime-keys] no node-local funded key here ({error}); reporting the recipient view");
+            println!(
+                "[fund-runtime-keys] no node-local funded key here ({error}); reporting the recipient view"
+            );
             let info = client.get_blockchain_info().await?;
             Ok(RuntimeFundingLocalStatus {
                 node: node_name(),

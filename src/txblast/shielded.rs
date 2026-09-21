@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use tokio::task::JoinHandle;
 
+use super::orchard::builder::ShieldedPool;
 use super::orchard::{
     BuiltTx, LaneRegistry, OrchardChainCursor, OrchardKeys, OrchardNullifierIndex, OrchardTree,
     OrchardTxblastTracer, PendingRpcStatus, PendingTx, PendingTxKind, RuntimePhase, ScheduledWork,
@@ -19,7 +20,6 @@ use super::orchard::{
 };
 use super::rpc::ZebraRpcClient;
 use super::transparent::FundedKey;
-use super::orchard::builder::ShieldedPool;
 use super::{OrchardBlastRuntimeConfig, TxblastNetworkParams, TxblastTraceConfig};
 
 const LOOP_IDLE_SLEEP: Duration = Duration::from_millis(100);

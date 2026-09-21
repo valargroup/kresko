@@ -31,15 +31,17 @@ chrono = { version = "0.4", default-features = false }
 # Kept under the `zebra_*` extern names via `package =` so the existing
 # `zebra_chain::...` paths throughout this crate keep compiling; Zakura is the
 # continuation of these crates under a new name.
-zebra-chain = { package = "zakura-chain", git = "https://github.com/zakura-core/zakura", rev = "62d9c72d169e00dfd46b87fb034d96ee123d810c", features = ["internal-miner"] }
-zebrad = { package = "zakura", git = "https://github.com/zakura-core/zakura", rev = "62d9c72d169e00dfd46b87fb034d96ee123d810c" }
-zebra-jsonl-trace = { package = "zakura-jsonl-trace", git = "https://github.com/zakura-core/zakura", rev = "62d9c72d169e00dfd46b87fb034d96ee123d810c" }
-zcash_primitives = { version = "0.29", features = ["transparent-inputs"] }
-zcash_protocol = "0.10"
-zcash_address = "0.13"
-zcash_transparent = "0.9"
-orchard = "0.15"
-sapling-crypto = "0.7"
+zebra-chain = { package = "zakura-chain", path = "../zakura.nu7-exp/crates/zakura-chain", features = ["internal-miner"] }
+zebrad = { package = "zakura", path = "../zakura.nu7-exp/crates/zakurad" }
+zebra-jsonl-trace = { package = "zakura-jsonl-trace", path = "../zakura.nu7-exp/crates/zakura-jsonl-trace" }
+# The Common stack zakura uses (zakura#1093), so the transaction builder signs
+# with the NU7 consensus branch id the node enforces.
+zcash_primitives = { package = "zakura-primitives", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd", features = ["transparent-inputs"] }
+zcash_protocol = { package = "zakura-protocol", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd" }
+zcash_address = { package = "zakura-address", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd" }
+zcash_transparent = { package = "zakura-transparent", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd" }
+orchard = { package = "zakura-orchard", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd" }
+sapling-crypto = { package = "zakura-sapling-crypto", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd" }
 incrementalmerkletree = "0.8"
 shardtree = "0.6"
 zcash_note_encryption = "0.4.1"
@@ -48,13 +50,11 @@ zcash_note_encryption = "0.4.1"
 # element, so it tracks that side rather than its own Orchard stack, which is
 # still on 0.13.
 ff = "0.14"
-jubjub = "0.10"
-bls12_381 = "0.8"
+jubjub = { package = "zakura-jubjub", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd" }
+bls12_381 = { package = "zakura-bls12-381", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd" }
 rand_core_06 = { package = "rand_core", version = "0.6" }
+# The Common transaction builder takes rand_core 0.10 RNGs.
+rand_core_10 = { package = "rand_core", version = "0.10" }
+getrandom_04 = { package = "getrandom", version = "0.4", features = ["sys_rng"] }
 
 
-[patch.crates-io]
-# zcash_primitives with the Orchard proving-key cache (valargroup/librustzcash
-# @ kresko-provingkey-cache). Same 0.29.0 source, one memoized key -- ~2.3x
-# faster steady-state transaction building. Drop once the cache lands upstream.
-zcash_primitives = { git = "https://github.com/valargroup/librustzcash", branch = "kresko-provingkey-cache" }

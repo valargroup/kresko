@@ -100,6 +100,11 @@ pub struct LocalTestnetParameters {
     /// set. Only meaningful on a chain seeded with unsolved blocks, where it
     /// must equal the total seeded block count.
     pub pow_start_height: Option<u32>,
+    /// NU7 activation height, rendered when NU7 is scheduled after the seeded
+    /// chain rather than activated with the other upgrades.
+    pub nu7_activation_height: Option<u32>,
+    /// Experiment-only NSM reissuance start height, rendered when set.
+    pub nsm_reissuance_height: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -623,10 +628,19 @@ pub fn apply_local_testnet_parameters(
             toml::Value::Integer(i64::from(params.activation_height)),
         );
     }
+    if let Some(nu7) = params.nu7_activation_height {
+        activation_heights.insert("NU7".to_string(), toml::Value::Integer(i64::from(nu7)));
+    }
     testnet_params.insert(
         "activation_heights".to_string(),
         toml::Value::Table(activation_heights),
     );
+    if let Some(height) = params.nsm_reissuance_height {
+        testnet_params.insert(
+            "nsm_reissuance_height".to_string(),
+            i64::from(height).into(),
+        );
+    }
 
     set_path(
         &mut parsed,
@@ -723,6 +737,23 @@ pub fn verify_local_testnet_parameters(
                 params.activation_height,
             );
         }
+    }
+    let actual_nu7 = activation.get("NU7").and_then(toml::Value::as_integer);
+    if let Some(expected) = params.nu7_activation_height {
+        if actual_nu7 != Some(i64::from(expected)) {
+            anyhow::bail!(
+                "rendered NU7 activation height mismatch: expected {expected}, got {actual_nu7:?}",
+            );
+        }
+    }
+    let actual_reissuance = testnet_params
+        .get("nsm_reissuance_height")
+        .and_then(toml::Value::as_integer);
+    if actual_reissuance != params.nsm_reissuance_height.map(i64::from) {
+        anyhow::bail!(
+            "rendered nsm_reissuance_height mismatch: expected {:?}, got {actual_reissuance:?}",
+            params.nsm_reissuance_height,
+        );
     }
 
     if let Some(rendered) = testnet_params
@@ -1562,6 +1593,8 @@ initial_mainnet_peers = []
             post_blossom_pow_target_spacing: None,
             daa: DaaConfig::default(),
             pow_start_height: None,
+            nu7_activation_height: None,
+            nsm_reissuance_height: None,
         };
         let with_params = apply_local_testnet_parameters(&with_address, &params)
             .expect("apply local testnet parameters");
@@ -1619,6 +1652,8 @@ initial_mainnet_peers = []
             post_blossom_pow_target_spacing: None,
             daa: DaaConfig::default(),
             pow_start_height: None,
+            nu7_activation_height: None,
+            nsm_reissuance_height: None,
         };
         let template = template_for(NetworkKind::LocalGenesis).expect("template generation");
         let generated = apply_local_testnet_parameters(&template, &params)
@@ -1704,6 +1739,8 @@ initial_mainnet_peers = []
             post_blossom_pow_target_spacing: None,
             daa: DaaConfig::default(),
             pow_start_height: None,
+            nu7_activation_height: None,
+            nsm_reissuance_height: None,
         }
     }
 
@@ -1924,6 +1961,8 @@ initial_mainnet_peers = []
                 testnet_min_difficulty_gap_multiplier: Some(4),
             },
             pow_start_height: Some(257),
+            nu7_activation_height: None,
+            nsm_reissuance_height: None,
         };
 
         let template = template_for(NetworkKind::LocalGenesis).expect("template generation");
