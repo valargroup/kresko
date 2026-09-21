@@ -466,7 +466,6 @@ fn prepare_generated_local_genesis(
         target_spacing_secs: seed_spacing_secs,
         seeded_tip_time: None,
         maturity_padding_blocks,
-        ..LocalTestnetGenesisOptions::default()
     };
 
     let generated = generate_local_testnet_with_funded_keys(miner_names.to_vec(), options)

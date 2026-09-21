@@ -89,10 +89,10 @@ pub fn simulate(inputs: &SimulationInputs) -> SimulationResult {
     let mut daa = inputs.daa.clone();
 
     for height in 1..=inputs.blocks {
-        if let Some((switch_height, spacing)) = inputs.spacing_switch {
-            if height >= switch_height {
-                daa.target_spacing_secs = spacing;
-            }
+        if let Some((switch_height, spacing)) = inputs.spacing_switch
+            && height >= switch_height
+        {
+            daa.target_spacing_secs = spacing;
         }
         let target = expected_target(&history, &daa);
         let target_fraction = target_to_fraction(target);
