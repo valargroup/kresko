@@ -121,6 +121,12 @@ if [ "$BUILD_KRESKO" = true ]; then
         "$KRESKO_ROOT"
 
     echo "=== Building kresko ==="
+    # Cargo.toml may take zakura by path from a sibling worktree
+    # (`../zakura.nu7-exp`). Mount it at the same relative path in the container.
+    extra_mounts=()
+    for dep in $(sed -n 's/.*path = "\.\.\/\([^/"]*\)\/.*/\1/p' "$KRESKO_ROOT/Cargo.toml" | sort -u); do
+        extra_mounts+=(-v "$(readlink -f "$KRESKO_ROOT/../$dep"):/workspace/$dep:ro")
+    done
     # No RUSTFLAGS: the zcash_unstable cfgs belonged to the NU7 Zebra worktree.
     # kresko now takes zakura-chain from git and must be built with the same
     # cfgs as the node binary it generates chains for — `cargo xtask package
@@ -131,6 +137,7 @@ if [ "$BUILD_KRESKO" = true ]; then
         -e HOST_UID="$(id -u)" \
         -e HOST_GID="$(id -g)" \
         -v "$KRESKO_ROOT:/workspace/kresko:ro" \
+        "${extra_mounts[@]}" \
         -v "$OUTPUT_DIR:/output" \
         -v "kresko-cargo-registry:/root/.cargo/registry" \
         -v "kresko-cargo-git:/root/.cargo/git" \
