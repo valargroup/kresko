@@ -396,6 +396,12 @@ pub fn benchmark_equihash_solver(inputs: PowBenchInputs) -> Result<PowBenchResul
     }
 
     let elapsed_secs = started.elapsed().as_secs_f64();
+    // `Solution::solve` returns only the solutions that meet the header's
+    // difficulty and silently moves past nonces where none do. At `207fffff`
+    // about half pass, so the returned count is half the solver's real output.
+    // Scale by the known pass probability; without this the bench reported
+    // ~0.5x the rate mining achieves (NU7 experiment, 2026-09-21).
+    let pass_probability = benchmark_pass_probability()?;
     if elapsed_secs <= 0.0 || nonce_trials == 0 || mining_candidates == 0 {
         anyhow::bail!(
             "Equihash benchmark produced an unusable measurement (params={}, nonce_trials={}, solutions={}, candidates={}, elapsed={}s)",
@@ -414,9 +420,20 @@ pub fn benchmark_equihash_solver(inputs: PowBenchInputs) -> Result<PowBenchResul
         mining_candidates,
         elapsed_secs,
         nonce_trials_per_sec: nonce_trials as f64 / elapsed_secs,
-        sol_per_sec: equihash_solutions as f64 / elapsed_secs,
-        mining_candidates_per_sec: mining_candidates as f64 / elapsed_secs,
+        sol_per_sec: equihash_solutions as f64 / pass_probability / elapsed_secs,
+        mining_candidates_per_sec: mining_candidates as f64 / pass_probability / elapsed_secs,
     })
+}
+
+/// Compact difficulty of the benchmark header.
+const BENCHMARK_DIFFICULTY_HEX: &str = "207fffff";
+
+/// Probability that one Equihash solution meets [`BENCHMARK_DIFFICULTY_HEX`].
+fn benchmark_pass_probability() -> Result<f64> {
+    let compact = u32::from_str_radix(BENCHMARK_DIFFICULTY_HEX, 16)?;
+    let exponent = (compact >> 24) as i32;
+    let mantissa = f64::from(compact & 0x007f_ffff);
+    Ok(mantissa * 2f64.powi(8 * (exponent - 3) - 256))
 }
 
 fn benchmark_header(_network: &Network) -> Result<Header> {
@@ -426,7 +443,7 @@ fn benchmark_header(_network: &Network) -> Result<Header> {
         merkle_root: block::merkle::Root([0; 32]),
         commitment_bytes: HexDebug([0; 32]),
         time: chrono::DateTime::from_timestamp(0, 0).context("invalid benchmark timestamp")?,
-        difficulty_threshold: CompactDifficulty::from_hex("207fffff")
+        difficulty_threshold: CompactDifficulty::from_hex(BENCHMARK_DIFFICULTY_HEX)
             .map_err(|e| anyhow::anyhow!("invalid benchmark difficulty: {e}"))?,
         nonce: HexDebug([0; 32]),
         solution: Solution::for_proposal(),
@@ -779,5 +796,11 @@ mod tests {
             measured.fleet_discount,
             default_local_to_fleet_discount(EquihashParameterSet::Regtest)
         );
+    }
+
+    #[test]
+    fn benchmark_pass_probability_is_about_one_half() {
+        let p = benchmark_pass_probability().expect("valid compact");
+        assert!((p - 0.5).abs() < 1e-6, "p = {p}");
     }
 }
