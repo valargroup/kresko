@@ -42,6 +42,13 @@ pub struct SimulationInputs {
     /// `(height, spacing)`: from this simulated height on, the DAA targets this
     /// spacing instead of `daa.target_spacing_secs`, as at NU7.
     pub spacing_switch: Option<(u32, u32)>,
+    /// Averaging window from the switch height on. ZIP 218 (NU7) widens it
+    /// from 17 to 102 blocks. `None` keeps `daa.tuning.pow_averaging_window`.
+    pub switched_averaging_window: Option<usize>,
+    /// Seed blocks prepended when `initial_target` is set. At least the
+    /// largest DAA context used in the run; `kresko genesis` seeds
+    /// `miners + padding + 1` blocks, which is usually more.
+    pub seed_blocks: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -66,8 +73,13 @@ pub fn simulate(inputs: &SimulationInputs) -> SimulationResult {
     );
 
     let mut rng = StdRng::seed_from_u64(inputs.seed);
+    let largest_context = inputs.daa.context_len().max(
+        inputs
+            .switched_averaging_window
+            .map_or(0, |window| window + inputs.daa.tuning.pow_median_block_span),
+    );
     let seed_count = if inputs.initial_target.is_some() {
-        inputs.daa.context_len()
+        inputs.seed_blocks.unwrap_or(largest_context).max(largest_context)
     } else {
         0
     };
@@ -93,6 +105,9 @@ pub fn simulate(inputs: &SimulationInputs) -> SimulationResult {
             && height >= switch_height
         {
             daa.target_spacing_secs = spacing;
+            if let Some(window) = inputs.switched_averaging_window {
+                daa.tuning.pow_averaging_window = window;
+            }
         }
         let target = expected_target(&history, &daa);
         let target_fraction = target_to_fraction(target);
@@ -183,6 +198,8 @@ mod tests {
             seed: 42,
             initial_target: None,
             spacing_switch: None,
+            switched_averaging_window: None,
+            seed_blocks: None,
         }
     }
 

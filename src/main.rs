@@ -337,6 +337,17 @@ enum Commands {
         /// Target spacing in seconds from `--switch-spacing-at` on.
         #[arg(long, requires = "switch_spacing_at")]
         switched_spacing: Option<u32>,
+
+        /// DAA averaging window from `--switch-spacing-at` on. NU7 (ZIP 218)
+        /// uses 102.
+        #[arg(long, requires = "switch_spacing_at")]
+        switched_averaging_window: Option<usize>,
+
+        /// Seed blocks at `--initial-target` before the first live block
+        /// (`kresko genesis` seeds miners + padding + 1). Defaults to the
+        /// largest DAA context in the run.
+        #[arg(long, requires = "initial_target")]
+        seed_blocks: Option<usize>,
     },
 
     /// Benchmark the compiled Equihash solver used by live mining
@@ -1381,6 +1392,8 @@ async fn main() -> Result<()> {
             initial_target,
             switch_spacing_at,
             switched_spacing,
+            switched_averaging_window,
+            seed_blocks,
         } => {
             let cli = pow_sim::PowSimulateCli {
                 num_miners: miners,
@@ -1395,6 +1408,8 @@ async fn main() -> Result<()> {
                 csv_path: csv,
                 initial_target_hex: initial_target,
                 spacing_switch: switch_spacing_at.zip(switched_spacing),
+                switched_averaging_window,
+                seed_blocks,
             };
             pow_sim::run(cli)?;
         }

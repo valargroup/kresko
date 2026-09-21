@@ -40,6 +40,10 @@ pub struct PowSimulateCli {
     pub initial_target_hex: Option<String>,
     /// `(height, spacing)` at which the target spacing changes, as at NU7.
     pub spacing_switch: Option<(u32, u32)>,
+    /// Averaging window from the switch on (102 for NU7, ZIP 218).
+    pub switched_averaging_window: Option<usize>,
+    /// Seed blocks prepended with `initial_target_hex`.
+    pub seed_blocks: Option<usize>,
 }
 
 /// Inputs provided on the CLI to `kresko pow-simulate-matrix`.
@@ -171,6 +175,8 @@ pub fn run_matrix(cli: PowSimulateMatrixCli) -> Result<()> {
                         csv_path: None,
                         initial_target_hex: None,
                         spacing_switch: None,
+                        switched_averaging_window: None,
+                        seed_blocks: None,
                     };
                     let prepared = prepare_simulation(&cli_run)?;
                     let result = simulate(&prepared.inputs);
@@ -257,6 +263,8 @@ fn prepare_simulation(cli: &PowSimulateCli) -> Result<PreparedSimulation> {
                 .transpose()
                 .map_err(|e| anyhow::anyhow!("bad initial target: {e}"))?,
             spacing_switch: cli.spacing_switch,
+            switched_averaging_window: cli.switched_averaging_window,
+            seed_blocks: cli.seed_blocks,
         },
         pow_limit_hex,
         natural_bits,
