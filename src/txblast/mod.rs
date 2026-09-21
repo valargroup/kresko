@@ -89,6 +89,44 @@ pub(crate) fn local_genesis_latest_upgrade() -> NetworkUpgrade {
 /// The builder signs with the branch id of the newest upgrade active at the
 /// target height, so this is what switches transactions to NU7's branch id at
 /// the activation block.
+/// The height to build a local-genesis transaction for, `offset` blocks past `tip`.
+///
+/// The builder picks the consensus branch id from the target height, not the
+/// height the transaction is mined at. A target past a scheduled NU7 while the
+/// chain is still below it signs with NU7's branch id, and the node rejects the
+/// transaction until NU7 activates. So the target stops at the last pre-NU7
+/// height, which keeps the NU6.3 branch id and still leaves the transaction
+/// mineable (and expiring) as late as the offset allows.
+pub(crate) fn local_target_height(tip: u32, offset: u32) -> u32 {
+    target_height_before_upgrade(tip, offset, local_genesis_nu7_height())
+}
+
+fn target_height_before_upgrade(tip: u32, offset: u32, upgrade: Option<u32>) -> u32 {
+    let target = tip.saturating_add(offset);
+    match upgrade {
+        Some(upgrade) if tip.saturating_add(1) < upgrade && target >= upgrade => upgrade - 1,
+        _ => target,
+    }
+}
+
+#[cfg(test)]
+mod target_height_tests {
+    use super::target_height_before_upgrade;
+
+    #[test]
+    fn targets_stop_before_a_scheduled_upgrade() {
+        // Far from the upgrade, or with none scheduled, the offset applies.
+        assert_eq!(target_height_before_upgrade(100, 100, None), 200);
+        assert_eq!(target_height_before_upgrade(100, 50, Some(188)), 150);
+        // An offset that crosses the upgrade stops at the last pre-upgrade height.
+        assert_eq!(target_height_before_upgrade(128, 100, Some(188)), 187);
+        assert_eq!(target_height_before_upgrade(186, 100, Some(188)), 187);
+        // Once the next block is the upgrade block or later, the offset applies again.
+        assert_eq!(target_height_before_upgrade(187, 100, Some(188)), 287);
+        assert_eq!(target_height_before_upgrade(300, 100, Some(188)), 400);
+    }
+}
+
 pub(crate) fn local_genesis_nu7_height() -> Option<u32> {
     static HEIGHT: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
     *HEIGHT.get_or_init(|| {

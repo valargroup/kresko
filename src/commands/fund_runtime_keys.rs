@@ -291,7 +291,7 @@ async fn fund_runtime_keys_local(
     }
 
     let shield_anchor = fetch_orchard_anchor(&client, &network_params).await?;
-    let shield_target_height = current_height.saturating_add(10);
+    let shield_target_height = crate::txblast::local_target_height(current_height, 10);
     let shield_submitted = build_and_send_shielding_tx_multi(
         network_params,
         &client,
@@ -414,7 +414,8 @@ async fn fund_runtime_keys_local(
         recipients.push((transparent_address_for_runtime_key(key)?, value));
     }
 
-    let funding_target_height = client.get_block_count().await?.saturating_add(10);
+    let funding_target_height =
+        crate::txblast::local_target_height(client.get_block_count().await?, 10);
     let funding_txid = build_and_send_orchard_to_transparent_tx(
         network_params,
         &client,

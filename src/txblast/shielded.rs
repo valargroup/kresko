@@ -865,10 +865,10 @@ async fn run_bootstrap(
             plan_shielding_outputs(utxo.satoshis, remaining_lane_target, orchard_cfg)?;
 
         let anchor = fetch_orchard_anchor(client, &orchard_cfg.network_params).await?;
-        let target_height = client
-            .get_block_count()
-            .await?
-            .saturating_add(TARGET_HEIGHT_OFFSET_BLOCKS);
+        let target_height = super::local_target_height(
+            client.get_block_count().await?,
+            TARGET_HEIGHT_OFFSET_BLOCKS,
+        );
         tracer.trace_registry(
             Some(cursor.last_scanned_height()),
             phase,
@@ -1339,7 +1339,8 @@ pub async fn run(
             }
 
             let anchor = latest_checkpoint_anchor(&tree, &checkpoint)?;
-            let target_height = current.saturating_add(TARGET_HEIGHT_OFFSET_BLOCKS);
+            let target_height =
+                super::local_target_height(current, TARGET_HEIGHT_OFFSET_BLOCKS);
 
             // Determine how many items we can batch.
             let batch_capacity = std::cmp::min(
