@@ -967,7 +967,10 @@ mod tests {
             .expect("the rendered config must match the generated chain");
 
         assert!(rendered.contains(&format!("NU7 = {}", first_live + 40)));
-        assert!(rendered.contains("\"NU6.3\" = 1"));
+        // Every upgrade through NU6.3 activates at the first live block: the
+        // seed blocks are pre-Overwinter. (`contains("\"NU6.3\" = 1")` would
+        // also match 130.)
+        assert!(rendered.contains(&format!("\"NU6.3\" = {first_live}\n")));
         assert!(rendered.contains(&format!("nsm_reissuance_height = {}", first_live + 190)));
         assert!(!rendered.contains("post_blossom_pow_target_spacing"));
     }
