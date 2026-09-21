@@ -323,6 +323,11 @@ pub struct LocalGenesisConfig {
     pub network_name: String,
     pub network_magic: [u8; 4],
     pub target_difficulty_limit: String,
+    /// Target the seed blocks declare when it is tighter than the limit, as the
+    /// expanded difficulty of the seed tip's nBits. The first live block starts
+    /// from it. `None` means the seeds declare the limit.
+    #[serde(default)]
+    pub seed_difficulty_target: Option<String>,
     /// Live post-Blossom PoW target spacing used by the generated testnet.
     #[serde(default)]
     pub target_spacing_secs: Option<u32>,

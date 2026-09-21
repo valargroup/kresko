@@ -36,6 +36,10 @@ pub struct PowSimulateCli {
     pub seed: u64,
     /// If set, write per-block CSV to this path.
     pub csv_path: Option<String>,
+    /// Hex target the chain opens at (seed blocks' nBits). None: at the limit.
+    pub initial_target_hex: Option<String>,
+    /// `(height, spacing)` at which the target spacing changes, as at NU7.
+    pub spacing_switch: Option<(u32, u32)>,
 }
 
 /// Inputs provided on the CLI to `kresko pow-simulate-matrix`.
@@ -113,6 +117,7 @@ pub fn run(cli: PowSimulateCli) -> Result<()> {
     println!();
 
     report(&result, &inputs);
+    report_bands(&result, &inputs);
 
     if let Some(path) = cli.csv_path {
         write_csv(&result, Path::new(&path))
@@ -164,6 +169,8 @@ pub fn run_matrix(cli: PowSimulateMatrixCli) -> Result<()> {
                         target_difficulty_limit_hex: None,
                         seed,
                         csv_path: None,
+                        initial_target_hex: None,
+                        spacing_switch: None,
                     };
                     let prepared = prepare_simulation(&cli_run)?;
                     let result = simulate(&prepared.inputs);
@@ -243,6 +250,13 @@ fn prepare_simulation(cli: &PowSimulateCli) -> Result<PreparedSimulation> {
                 tuning,
             },
             seed: cli.seed,
+            initial_target: cli
+                .initial_target_hex
+                .as_deref()
+                .map(parse_pow_limit_hex)
+                .transpose()
+                .map_err(|e| anyhow::anyhow!("bad initial target: {e}"))?,
+            spacing_switch: cli.spacing_switch,
         },
         pow_limit_hex,
         natural_bits,
@@ -529,5 +543,46 @@ mod tests {
         let params = parse_equihash_list("common,regtest").unwrap();
         let rates = parse_sol_rate_list("regtest=100.0,common=1.5", &params).unwrap();
         assert_eq!(rates, vec![1.5, 100.0]);
+    }
+}
+
+/// Mean block time in consecutive bands, so the opening and a spacing switch
+/// can be read directly: 10-block bands up to the switch, then 10-block bands
+/// for the first 120 blocks after it, then one band for the rest.
+fn report_bands(result: &simulate::SimulationResult, inputs: &SimulationInputs) {
+    if inputs.initial_target.is_none() && inputs.spacing_switch.is_none() {
+        return;
+    }
+    let limit = inputs.daa.pow_limit;
+    let switch = inputs.spacing_switch.map(|(h, _)| h as usize);
+    let mut edges = Vec::new();
+    let end = result.blocks.len();
+    let mut start = 0usize;
+    while start < end {
+        let stop = match switch {
+            Some(sw) if start < sw - 1 => (start + 10).min(sw - 1),
+            Some(sw) if start < sw - 1 + 120 => (start + 10).min(end),
+            None if start < 120 => (start + 10).min(end),
+            _ => end,
+        };
+        edges.push((start, stop));
+        start = stop;
+    }
+    println!();
+    println!("=== Bands (height = simulated block, 1-based) ===");
+    println!("  heights      mean_s  limit/target");
+    for (a, b) in edges {
+        let slice = &result.blocks[a..b];
+        if slice.is_empty() {
+            continue;
+        }
+        let mean = slice.iter().map(|x| x.block_time_secs).sum::<f64>() / slice.len() as f64;
+        let last = slice.last().expect("non-empty").target;
+        let ratio = if last.is_zero() {
+            f64::INFINITY
+        } else {
+            (limit / last).low_u64() as f64
+        };
+        println!("  {:>4}..{:<4}  {:>7.1}  {:>6.1}", a + 1, b, mean, ratio);
     }
 }

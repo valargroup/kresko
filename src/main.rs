@@ -316,6 +316,19 @@ enum Commands {
         /// Optional path to write a per-block CSV.
         #[arg(long)]
         csv: Option<String>,
+
+        /// Hex target the chain opens at, as the seed blocks' nBits (64 chars).
+        /// Unset: the chain opens at the limit.
+        #[arg(long)]
+        initial_target: Option<String>,
+
+        /// Simulated height at which the target spacing changes (e.g. NU7).
+        #[arg(long, requires = "switched_spacing")]
+        switch_spacing_at: Option<u32>,
+
+        /// Target spacing in seconds from `--switch-spacing-at` on.
+        #[arg(long, requires = "switch_spacing_at")]
+        switched_spacing: Option<u32>,
     },
 
     /// Benchmark the compiled Equihash solver used by live mining
@@ -1355,6 +1368,9 @@ async fn main() -> Result<()> {
             target_difficulty_limit,
             seed,
             csv,
+            initial_target,
+            switch_spacing_at,
+            switched_spacing,
         } => {
             let cli = pow_sim::PowSimulateCli {
                 num_miners: miners,
@@ -1367,6 +1383,8 @@ async fn main() -> Result<()> {
                 target_difficulty_limit_hex: target_difficulty_limit,
                 seed,
                 csv_path: csv,
+                initial_target_hex: initial_target,
+                spacing_switch: switch_spacing_at.zip(switched_spacing),
             };
             pow_sim::run(cli)?;
         }

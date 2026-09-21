@@ -34,6 +34,14 @@ pub struct SimulationInputs {
     pub daa: DaaParams,
     /// RNG seed for reproducibility.
     pub seed: u64,
+    /// Target the chain opens at. When set, the simulator prepends a full DAA
+    /// context of seed blocks at this target, spaced at the starting target
+    /// spacing, as `kresko genesis` does. When unset, the chain opens at the
+    /// limit and the DAA returns the limit until its context fills.
+    pub initial_target: Option<U256>,
+    /// `(height, spacing)`: from this simulated height on, the DAA targets this
+    /// spacing instead of `daa.target_spacing_secs`, as at NU7.
+    pub spacing_switch: Option<(u32, u32)>,
 }
 
 #[derive(Debug)]
@@ -58,12 +66,35 @@ pub fn simulate(inputs: &SimulationInputs) -> SimulationResult {
     );
 
     let mut rng = StdRng::seed_from_u64(inputs.seed);
-    let mut history: Vec<BlockState> = Vec::with_capacity(inputs.blocks as usize);
+    let seed_count = if inputs.initial_target.is_some() {
+        inputs.daa.context_len()
+    } else {
+        0
+    };
+    let mut history: Vec<BlockState> =
+        Vec::with_capacity(seed_count + inputs.blocks as usize);
+    if let Some(initial) = inputs.initial_target {
+        let spacing = f64::from(inputs.daa.target_spacing_secs);
+        for k in (0..seed_count).rev() {
+            history.push(BlockState {
+                time_secs: -(k as f64) * spacing,
+                target: initial.min(inputs.daa.pow_limit),
+                block_time_secs: spacing,
+                orphan_siblings: 0,
+            });
+        }
+    }
     let mut now = 0.0f64;
     let mut total_orphans = 0u64;
+    let mut daa = inputs.daa.clone();
 
-    for _height in 1..=inputs.blocks {
-        let target = expected_target(&history, &inputs.daa);
+    for height in 1..=inputs.blocks {
+        if let Some((switch_height, spacing)) = inputs.spacing_switch {
+            if height >= switch_height {
+                daa.target_spacing_secs = spacing;
+            }
+        }
+        let target = expected_target(&history, &daa);
         let target_fraction = target_to_fraction(target);
         let lambda_per_miner = inputs.sol_per_sec_per_thread * target_fraction;
         let lambda_total = lambda_per_miner * inputs.num_miners as f64;
@@ -100,6 +131,7 @@ pub fn simulate(inputs: &SimulationInputs) -> SimulationResult {
         });
     }
 
+    history.drain(..seed_count);
     let canonical_blocks = inputs.blocks as u64;
     let effective_efficiency =
         canonical_blocks as f64 / (canonical_blocks as f64 + total_orphans as f64);
@@ -149,6 +181,8 @@ mod tests {
                 tuning: PowRoundTuning::from_profile(PowProfile::Mainnet),
             },
             seed: 42,
+            initial_target: None,
+            spacing_switch: None,
         }
     }
 
@@ -227,5 +261,33 @@ mod tests {
         let result = simulate(&inputs);
         assert_eq!(result.total_orphans, 0);
         assert!(result.effective_efficiency == 1.0);
+    }
+
+    #[test]
+    fn initial_target_opens_the_chain_at_that_target() {
+        // Limit calibrated for 25 s, seeds at the 75 s target (3x tighter).
+        let mut inputs = make_inputs(246);
+        inputs.daa.target_spacing_secs = 75;
+        let limit = inputs.daa.pow_limit;
+        inputs.initial_target = Some(limit / U256::from(3u64));
+        let result = simulate(&inputs);
+        assert_eq!(result.blocks.len(), inputs.blocks as usize);
+        // Equal up to the DAA's divide-then-multiply rounding.
+        let seed = limit / U256::from(3u64);
+        let first = result.blocks[0].target;
+        assert!(first <= seed && first >= seed - seed / U256::from(1_000u64));
+    }
+
+    #[test]
+    fn spacing_switch_loosens_the_target() {
+        let mut inputs = make_inputs(246);
+        inputs.daa.target_spacing_secs = 75;
+        inputs.initial_target = Some(inputs.daa.pow_limit / U256::from(3u64));
+        inputs.spacing_switch = Some((60, 25));
+        inputs.blocks = 260;
+        let result = simulate(&inputs);
+        let before = result.blocks[58].target;
+        let after = result.blocks[259].target;
+        assert!(after > before, "the target should loosen after the switch");
     }
 }

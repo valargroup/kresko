@@ -332,6 +332,7 @@ mod tests {
                 network_name: "Kresko_nu7".to_string(),
                 network_magic: [1, 2, 3, 4],
                 target_difficulty_limit: "0x0f".to_string(),
+                seed_difficulty_target: None,
                 target_spacing_secs: Some(25),
                 disable_pow: false,
                 genesis_hash: "00".repeat(32),

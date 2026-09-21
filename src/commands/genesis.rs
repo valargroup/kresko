@@ -119,8 +119,35 @@ pub fn run(
             // at its equilibrium difficulty with no adjustment warm-up.
             let calibration = run_pow_calibration(&config, &pow_calibration, target_spacing_secs)?;
             report_calibration(&calibration);
+            // A scheduled NU7 opens the chain at NU6.3's 75 s spacing. Starting
+            // at a limit calibrated for 25 s would run the pre-NU7 chain ~3x fast
+            // until the adjustment catches up (`pow-simulate`: ~145 blocks). So
+            // the seed blocks declare the 75 s target for the same rate, and the
+            // limit stays loose enough for NU7's 25 s.
+            let seed_difficulty_target = if schedule.nu7_activation_offset.is_some()
+                && target_spacing_secs < NU6_3_TARGET_SPACING_SECS
+            {
+                let seed = pow_tuning::calibrate(&PowTuningInputs {
+                    num_miners: calibration.num_miners,
+                    target_spacing_secs: NU6_3_TARGET_SPACING_SECS,
+                    target_adjust_fraction: calibration.target_adjust_fraction,
+                    sol_per_sec_override: Some(calibration.sol_per_sec_per_thread),
+                    ..Default::default()
+                })
+                .context("seed difficulty calibration failed")?;
+                println!(
+                    "seed difficulty target={} (spacing={}s, same rate); limit stays at {}s",
+                    seed.target_difficulty_limit_hex,
+                    NU6_3_TARGET_SPACING_SECS,
+                    calibration.target_spacing_secs,
+                );
+                Some(calibration_target_bytes(&seed)?)
+            } else {
+                None
+            };
             SeedingMode::EnforcePowAfterSeededTip {
                 target_difficulty_limit: calibration_target_bytes(&calibration)?,
+                seed_difficulty_target,
             }
         }
         _ => SeedingMode::PowDisabled,
@@ -388,9 +415,12 @@ enum SeedingMode {
     /// Proof-of-work stays off for the whole chain. Blocks are produced with the
     /// `generate` RPC rather than by mining.
     PowDisabled,
-    /// Proof-of-work is enforced from one past the seeded tip, at the calibrated
-    /// limit the seed blocks were written with.
-    EnforcePowAfterSeededTip { target_difficulty_limit: [u8; 32] },
+    /// Proof-of-work is enforced from one past the seeded tip. The seed blocks
+    /// declare `seed_difficulty_target` if set, else the calibrated limit.
+    EnforcePowAfterSeededTip {
+        target_difficulty_limit: [u8; 32],
+        seed_difficulty_target: Option<[u8; 32]>,
+    },
 }
 
 fn prepare_generated_local_genesis(
@@ -413,11 +443,15 @@ fn prepare_generated_local_genesis(
     // Seed blocks are always generated with Equihash solving off, so this is
     // cheap regardless of mode. Contextual difficulty still needs a target limit
     // that is safe for the configured DAA averaging window.
-    let target_difficulty_limit = match seeding {
-        SeedingMode::PowDisabled => LocalTestnetGenesisOptions::default().target_difficulty_limit,
+    let (target_difficulty_limit, seed_difficulty_target) = match seeding {
+        SeedingMode::PowDisabled => (
+            LocalTestnetGenesisOptions::default().target_difficulty_limit,
+            None,
+        ),
         SeedingMode::EnforcePowAfterSeededTip {
             target_difficulty_limit,
-        } => target_difficulty_limit,
+            seed_difficulty_target,
+        } => (target_difficulty_limit, seed_difficulty_target),
     };
     let options = LocalTestnetGenesisOptions {
         network_name: local_network_name(&config.chain_id),
@@ -428,6 +462,7 @@ fn prepare_generated_local_genesis(
             SeedingMode::EnforcePowAfterSeededTip { .. }
         ),
         target_difficulty_limit,
+        seed_difficulty_target,
         target_spacing_secs: seed_spacing_secs,
         seeded_tip_time: None,
         maturity_padding_blocks,
@@ -483,6 +518,13 @@ fn prepare_generated_local_genesis(
         network_name: network_params.network_name().to_string(),
         network_magic: network_params.network_magic().0,
         target_difficulty_limit: network_params.target_difficulty_limit().to_string(),
+        seed_difficulty_target: seed_difficulty_target.and_then(|_| {
+            generated
+                .blocks
+                .last()
+                .and_then(|block| block.header.difficulty_threshold.to_expanded())
+                .map(|target| target.to_string())
+        }),
         target_spacing_secs: Some(seed_spacing_secs),
         disable_pow: network_params.disable_pow(),
         genesis_hash: network_params.genesis_hash().to_string(),
@@ -817,6 +859,7 @@ mod tests {
             DaaConfig::default(),
             SeedingMode::EnforcePowAfterSeededTip {
                 target_difficulty_limit,
+                seed_difficulty_target: None,
             },
             UpgradeSchedule::default(),
         )
@@ -869,6 +912,10 @@ mod tests {
         let mut target_difficulty_limit = [0u8; 32];
         target_difficulty_limit[0] = 0x04;
         target_difficulty_limit[1] = 0xec;
+        // Three times tighter: the 75 s target for the rate the limit assumes at 25 s.
+        let mut seed_difficulty_target = [0u8; 32];
+        seed_difficulty_target[0] = 0x01;
+        seed_difficulty_target[1] = 0xa4;
 
         let maturity_padding_blocks = 125;
         let prepared = prepare_generated_local_genesis(
@@ -879,6 +926,7 @@ mod tests {
             DaaConfig::default(),
             SeedingMode::EnforcePowAfterSeededTip {
                 target_difficulty_limit,
+                seed_difficulty_target: Some(seed_difficulty_target),
             },
             UpgradeSchedule {
                 nu7_activation_offset: Some(40),
@@ -898,6 +946,13 @@ mod tests {
             Some(first_live + 190)
         );
         assert_eq!(prepared.local_testnet.latest_upgrade, "NU6.3");
+        let seed = prepared
+            .local_genesis
+            .seed_difficulty_target
+            .as_deref()
+            .expect("a seed target tighter than the limit is recorded");
+        assert!(seed.starts_with("01a4"), "seed target {seed}");
+        assert_ne!(seed, prepared.local_genesis.target_difficulty_limit);
         assert_eq!(prepared.local_testnet.post_blossom_pow_target_spacing, None);
         assert_eq!(
             prepared.local_genesis.target_spacing_secs,
