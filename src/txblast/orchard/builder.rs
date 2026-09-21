@@ -59,6 +59,17 @@ impl ShieldedPool {
         }
     }
 
+    /// The `z_gettreestate` key holding this pool's commitment tree.
+    ///
+    /// Orchard and Ironwood keep separate commitment and nullifier state, so a
+    /// root read from the wrong key is rejected as an unknown anchor.
+    pub(crate) fn treestate_key(self) -> &'static str {
+        match self {
+            ShieldedPool::Orchard => "orchard",
+            ShieldedPool::Ironwood => "ironwood",
+        }
+    }
+
     fn build_config(self, anchor: orchard::Anchor) -> BuildConfig {
         match self {
             ShieldedPool::Orchard => BuildConfig::Standard {
@@ -141,7 +152,13 @@ fn zip317_fee(
 }
 
 pub(crate) fn shielding_fee(output_count: usize) -> u64 {
-    zip317_fee(1, 0, orchard_bundle_actions(0, output_count))
+    shielding_fee_multi(1, output_count)
+}
+
+/// ZIP-317 fee for a shielding transaction that consumes several transparent
+/// UTXOs at once. Each transparent input counts as one logical action.
+pub(crate) fn shielding_fee_multi(input_count: usize, output_count: usize) -> u64 {
+    zip317_fee(input_count, 0, orchard_bundle_actions(0, output_count))
 }
 
 pub(crate) fn orchard_to_transparent_fee(output_count: usize) -> u64 {
@@ -154,6 +171,14 @@ pub(crate) fn orchard_to_transparent_with_change_fee() -> u64 {
 
 pub(crate) fn orchard_fanout_fee(output_count: usize) -> u64 {
     zip317_fee(0, 0, orchard_bundle_actions(1, output_count))
+}
+
+/// One transparent UTXO a shielding transaction spends.
+pub(crate) struct ShieldingInput {
+    pub(crate) txid: String,
+    pub(crate) output_index: u32,
+    pub(crate) script: String,
+    pub(crate) value: u64,
 }
 
 pub(crate) struct SubmittedTx {
@@ -439,6 +464,8 @@ pub(crate) fn plan_treasury_reseed_outputs(
     );
 }
 
+/// Shield a single transparent UTXO. Thin wrapper over the multi-input form.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn build_and_send_shielding_tx(
     network_params: TxblastNetworkParams,
     client: &ZebraRpcClient,
@@ -454,7 +481,51 @@ pub(crate) async fn build_and_send_shielding_tx(
     target_height: u32,
     kind: PendingTxKind,
 ) -> Result<SubmittedTx> {
-    let expected_fee = shielding_fee(outputs.len());
+    let inputs = [ShieldingInput {
+        txid: utxo_txid.to_owned(),
+        output_index: utxo_output_index,
+        script: utxo_script.to_owned(),
+        value: input_value,
+    }];
+    build_and_send_shielding_tx_multi(
+        network_params,
+        client,
+        funded_key,
+        keys,
+        &inputs,
+        outputs,
+        anchor,
+        submitted_height,
+        target_height,
+        kind,
+    )
+    .await
+}
+
+/// Shield many transparent UTXOs into one shielded note.
+///
+/// A coinbase output may only be spent to shielded outputs, so this is how
+/// mined value enters the shielded pool. Batching the inputs matters because
+/// funding a large generator fleet needs far more value than one coinbase
+/// output carries, and one transaction per UTXO would cost one block each.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn build_and_send_shielding_tx_multi(
+    network_params: TxblastNetworkParams,
+    client: &ZebraRpcClient,
+    funded_key: &FundedKey,
+    keys: &OrchardKeys,
+    inputs: &[ShieldingInput],
+    outputs: &[PlannedOutput],
+    anchor: orchard::Anchor,
+    submitted_height: u32,
+    target_height: u32,
+    kind: PendingTxKind,
+) -> Result<SubmittedTx> {
+    if inputs.is_empty() {
+        anyhow::bail!("a shielding transaction needs at least one transparent input");
+    }
+    let input_value: u64 = inputs.iter().map(|input| input.value).sum();
+    let expected_fee = shielding_fee_multi(inputs.len(), outputs.len());
     let output_total: u64 = outputs.iter().map(|output| output.value).sum();
     if input_value != output_total + expected_fee {
         anyhow::bail!(
@@ -470,11 +541,13 @@ pub(crate) async fn build_and_send_shielding_tx(
     let build_config = pool.build_config(anchor);
     let mut builder = Builder::new(network_params, height, build_config);
 
-    let outpoint = transparent_outpoint(utxo_txid, utxo_output_index)?;
-    let coin = transparent_txout(input_value, utxo_script)?;
-    builder
-        .add_transparent_p2pkh_input(funded_key.public_key, outpoint, coin)
-        .map_err(|e| anyhow::anyhow!("add_transparent_p2pkh_input: {e}"))?;
+    for input in inputs {
+        let outpoint = transparent_outpoint(&input.txid, input.output_index)?;
+        let coin = transparent_txout(input.value, &input.script)?;
+        builder
+            .add_transparent_p2pkh_input(funded_key.public_key, outpoint, coin)
+            .map_err(|e| anyhow::anyhow!("add_transparent_p2pkh_input: {e}"))?;
+    }
 
     for output in outputs {
             pool.add_output(&mut builder, keys.fvk.clone(), keys.ovk.clone(), keys.address, Zatoshis::from_u64(output.value).context("invalid orchard output amount")?, memo_for_role(output.role))?;
@@ -511,7 +584,8 @@ pub(crate) async fn build_and_send_shielding_tx(
     let txid = client.send_raw_transaction(&hex::encode(&tx_bytes)).await?;
     let rpc_submit_duration_ms = duration_ms_u64(submit_start.elapsed().as_millis());
     let submitted_at = Instant::now();
-    let parent_note_id = Some(format!("{utxo_txid}:{utxo_output_index}"));
+    let first = &inputs[0];
+    let parent_note_id = Some(format!("{}:{}", first.txid, first.output_index));
     let recovered_notes = recovered_notes
         .into_iter()
         .map(|note| note.with_origin(&txid, parent_note_id.clone()))
@@ -530,7 +604,7 @@ pub(crate) async fn build_and_send_shielding_tx(
             spent_lane_id: None,
             spent_note_role: None,
             spent_note_value: None,
-            spent_transparent_outpoint: Some(format!("{utxo_txid}:{utxo_output_index}")),
+            spent_transparent_outpoint: Some(format!("{}:{}", first.txid, first.output_index)),
             submitted_at,
             submitted_height,
             last_rpc_status: PendingRpcStatus::Unknown,

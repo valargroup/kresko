@@ -15,6 +15,7 @@ use zebra_chain::serialization::{ZcashDeserialize, ZcashSerialize};
 use crate::txblast::OrchardBlastRuntimeConfig;
 use crate::txblast::rpc::ZebraRpcClient;
 
+use super::builder::ShieldedPool;
 use super::{
     LaneRegistry, OrchardKeys, OrchardTxblastTracer, PendingTx, RuntimePhase, TrackedNote,
     TreasuryInventory, decode_txblast_note_role, pending_counts, pending_trace_summary,
@@ -139,6 +140,7 @@ pub(crate) async fn scan_block_range(
 
     for height in start_height..=end_height {
         let block_hash = client.get_block_hash(height).await?;
+        let pool = ShieldedPool::at_height(&orchard_cfg.network_params, height.into());
         let had_actions = scan_block(
             client,
             keys,
@@ -152,6 +154,7 @@ pub(crate) async fn scan_block_range(
             treasury,
             tracer,
             phase,
+            pool,
         )
         .await?;
 
@@ -185,17 +188,19 @@ pub(crate) async fn seed_orchard_tree_from_treestate(
     tree: &mut OrchardTree,
     client: &ZebraRpcClient,
     height: u32,
+    pool: ShieldedPool,
 ) -> Result<()> {
     let treestate = client.z_get_treestate(height).await?;
+    let key = pool.treestate_key();
     let final_state_hex = treestate
-        .pointer("/orchard/commitments/finalState")
+        .pointer(&format!("/{key}/commitments/finalState"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
     if final_state_hex.is_empty() {
         return Ok(());
     }
     let final_root_hex = treestate
-        .pointer("/orchard/commitments/finalRoot")
+        .pointer(&format!("/{key}/commitments/finalRoot"))
         .and_then(|v| v.as_str());
 
     let final_state = hex::decode(final_state_hex)
@@ -317,6 +322,7 @@ async fn scan_block(
     treasury: &mut TreasuryInventory,
     tracer: &OrchardTxblastTracer,
     phase: RuntimePhase,
+    pool: ShieldedPool,
 ) -> Result<bool> {
     let block_bytes = client.getblock_raw(height).await?;
     let block = zebra_chain::block::Block::zcash_deserialize(&block_bytes[..])
@@ -333,7 +339,11 @@ async fn scan_block(
 
     for tx in &block.transactions {
         let tx_hash = tx.hash().to_string();
-        let Some(shielded_data) = tx.orchard_shielded_data() else {
+        let shielded_data = match pool {
+            ShieldedPool::Orchard => tx.orchard_shielded_data(),
+            ShieldedPool::Ironwood => tx.ironwood_shielded_data(),
+        };
+        let Some(shielded_data) = shielded_data else {
             continue;
         };
         let nu = tx.network_upgrade().unwrap_or(NetworkUpgrade::Nu5);
@@ -350,8 +360,12 @@ async fn scan_block(
             .with_context(|| format!("failed to serialize orchard transaction {tx_hash}"))?;
         let lib_tx = zcash_primitives::transaction::Transaction::read(&tx_bytes[..], branch_id)
             .with_context(|| format!("failed to convert orchard transaction {tx_hash}"))?;
-        let bundle = lib_tx.orchard_bundle().ok_or_else(|| {
-            anyhow::anyhow!("missing orchard bundle after conversion for {tx_hash}")
+        let bundle = match pool {
+            ShieldedPool::Orchard => lib_tx.orchard_bundle(),
+            ShieldedPool::Ironwood => lib_tx.ironwood_bundle(),
+        };
+        let bundle = bundle.ok_or_else(|| {
+            anyhow::anyhow!("missing shielded bundle after conversion for {tx_hash}")
         })?;
 
         for nullifier in shielded_data.nullifiers() {

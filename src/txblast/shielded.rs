@@ -19,7 +19,8 @@ use super::orchard::{
 };
 use super::rpc::ZebraRpcClient;
 use super::transparent::FundedKey;
-use super::{OrchardBlastRuntimeConfig, TxblastTraceConfig};
+use super::orchard::builder::ShieldedPool;
+use super::{OrchardBlastRuntimeConfig, TxblastNetworkParams, TxblastTraceConfig};
 
 const LOOP_IDLE_SLEEP: Duration = Duration::from_millis(100);
 const BUILD_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
@@ -211,15 +212,19 @@ async fn probe_submitted_tx_visibility(
     });
 }
 
-async fn fetch_orchard_anchor(client: &ZebraRpcClient) -> Result<orchard::Anchor> {
+async fn fetch_orchard_anchor(
+    client: &ZebraRpcClient,
+    network_params: &TxblastNetworkParams,
+) -> Result<orchard::Anchor> {
     let height = client.get_block_count().await?;
     if height == 0 {
         return Ok(orchard::Anchor::empty_tree());
     }
 
+    let pool = ShieldedPool::at_height(network_params, height.into());
     let treestate = client.z_get_treestate(height).await?;
     let root_hex = treestate
-        .pointer("/orchard/commitments/finalRoot")
+        .pointer(&format!("/{}/commitments/finalRoot", pool.treestate_key()))
         .and_then(|v| v.as_str())
         .unwrap_or("");
     if root_hex.is_empty()
@@ -234,7 +239,7 @@ async fn fetch_orchard_anchor(client: &ZebraRpcClient) -> Result<orchard::Anchor
         .map_err(|_| anyhow::anyhow!("orchard finalRoot is not 32 bytes"))?;
     let ct = orchard::Anchor::from_bytes(root_bytes);
     if bool::from(ct.is_none()) {
-        anyhow::bail!("orchard finalRoot is not a valid anchor");
+        anyhow::bail!("shielded finalRoot is not a valid anchor");
     }
 
     Ok(ct.unwrap())
@@ -277,6 +282,7 @@ async fn seed_orchard_tree_for_scan_start(
     tree: &mut OrchardTree,
     next_position: &mut u64,
     scan_start_height: u32,
+    network_params: &TxblastNetworkParams,
 ) -> Result<()> {
     if scan_start_height <= 1 {
         return Ok(());
@@ -287,7 +293,8 @@ async fn seed_orchard_tree_for_scan_start(
         "[shielded] seeding Orchard tree from treestate at height {}",
         frontier_height
     );
-    seed_orchard_tree_from_treestate(tree, client, frontier_height).await?;
+    let pool = ShieldedPool::at_height(network_params, frontier_height.into());
+    seed_orchard_tree_from_treestate(tree, client, frontier_height, pool).await?;
     *next_position = tree
         .frontier()
         .map_err(|e| anyhow::anyhow!("seeded Orchard frontier read failed: {e:?}"))?
@@ -362,7 +369,14 @@ async fn rescan_orchard_state_from_chain(
     registry.reset_for_rebuild();
     cursor.reset_for_rebuild();
 
-    seed_orchard_tree_for_scan_start(client, tree, next_position, scan_start_height).await?;
+    seed_orchard_tree_for_scan_start(
+        client,
+        tree,
+        next_position,
+        scan_start_height,
+        &orchard_cfg.network_params,
+    )
+    .await?;
 
     let best_tip = poll_best_tip(client).await?;
     cursor.record_best_tip(best_tip.clone());
@@ -850,7 +864,7 @@ async fn run_bootstrap(
         let planned_outputs =
             plan_shielding_outputs(utxo.satoshis, remaining_lane_target, orchard_cfg)?;
 
-        let anchor = fetch_orchard_anchor(client).await?;
+        let anchor = fetch_orchard_anchor(client, &orchard_cfg.network_params).await?;
         let target_height = client
             .get_block_count()
             .await?
@@ -1080,8 +1094,14 @@ pub async fn run(
         orchard_cfg,
         Some("starting_up"),
     );
-    seed_orchard_tree_for_scan_start(client, &mut tree, &mut next_position, scan_start_height)
-        .await?;
+    seed_orchard_tree_for_scan_start(
+        client,
+        &mut tree,
+        &mut next_position,
+        scan_start_height,
+        &orchard_cfg.network_params,
+    )
+    .await?;
     if best_tip.height >= scan_start_height {
         println!(
             "[shielded] scanning blocks {}..{} for existing Orchard commitments",

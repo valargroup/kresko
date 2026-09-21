@@ -475,6 +475,15 @@ enum Commands {
         /// Expected transparent runtime funding transaction id
         #[arg(long)]
         expected_funding_txid: Option<String>,
+
+        /// Chain the funding transactions are built for
+        #[arg(long, default_value = "local-genesis")]
+        network: String,
+
+        /// Treasury UTXOs to consume in one shielding transaction. Raise this to
+        /// fund a large fleet: a coinbase output is small and the fee is shared.
+        #[arg(long, default_value_t = 1)]
+        treasury_utxo_count: usize,
     },
 
     /// Query txblast Orchard readiness from local trace files (intended to run on remote nodes)
@@ -1455,7 +1464,17 @@ async fn main() -> Result<()> {
             json,
             verify_only,
             expected_funding_txid,
+            network,
+            treasury_utxo_count,
         } => {
+            let network_params = match network.as_str() {
+                "local-genesis" => txblast::TxblastNetworkParams::LocalGenesis,
+                "testnet" => txblast::TxblastNetworkParams::PublicTestnet,
+                "mainnet" => txblast::TxblastNetworkParams::Mainnet,
+                other => anyhow::bail!(
+                    "unknown --network {other}: expected local-genesis, testnet or mainnet"
+                ),
+            };
             commands::fund_runtime_keys::run_local(
                 &rpc_endpoint,
                 &local_genesis_dir,
@@ -1464,6 +1483,8 @@ async fn main() -> Result<()> {
                 json,
                 verify_only,
                 expected_funding_txid.as_deref(),
+                network_params,
+                treasury_utxo_count,
             )
             .await?;
         }

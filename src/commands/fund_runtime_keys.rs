@@ -13,10 +13,11 @@ use crate::config::{LocalGenesisFundedKey, OrchardTxblastConfig};
 use crate::txblast::orchard::{
     LaneRegistry, OrchardChainCursor, OrchardNullifierIndex, OrchardTree, OrchardTxblastTracer,
     PendingTxKind, PlannedOutput, RuntimePhase, TreasuryInventory,
-    build_and_send_orchard_to_transparent_tx, build_and_send_shielding_tx, derive_orchard_keys,
-    latest_checkpoint_anchor, latest_witness, orchard_to_transparent_fee, scan_block_range,
-    shielding_fee,
+    build_and_send_orchard_to_transparent_tx, build_and_send_shielding_tx_multi,
+    derive_orchard_keys, latest_checkpoint_anchor, latest_witness, orchard_to_transparent_fee,
+    scan_block_range, seed_orchard_tree_from_treestate, shielding_fee_multi, ShieldingInput,
 };
+use crate::txblast::orchard::builder::ShieldedPool;
 use crate::txblast::rpc::{AddressUtxo, ZebraRpcClient};
 use crate::txblast::transparent::{FundedKey, load_funded_key};
 use crate::txblast::{OrchardBlastRuntimeConfig, TxblastNetworkParams, TxblastTraceConfig};
@@ -80,6 +81,7 @@ struct RecipientState {
     immature_coinbase_balance_zats: u64,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_local(
     rpc_endpoint: &str,
     local_genesis_dir: &str,
@@ -88,6 +90,8 @@ pub async fn run_local(
     json: bool,
     verify_only: bool,
     expected_funding_txid: Option<&str>,
+    network_params: TxblastNetworkParams,
+    treasury_utxo_count: usize,
 ) -> Result<()> {
     let status = if verify_only {
         verify_runtime_funding_local(
@@ -103,6 +107,8 @@ pub async fn run_local(
             local_genesis_dir,
             minimum_recipient_zats,
             confirm_timeout_secs,
+            network_params,
+            treasury_utxo_count,
         )
         .await?
     };
@@ -150,6 +156,8 @@ pub async fn ensure_local_runtime_funding(
         local_genesis_dir,
         minimum_recipient_zats,
         confirm_timeout_secs,
+        TxblastNetworkParams::LocalGenesis,
+        1,
     )
     .await?;
     if !status.ready {
@@ -169,6 +177,8 @@ async fn fund_runtime_keys_local(
     local_genesis_dir: &str,
     minimum_recipient_zats: u64,
     confirm_timeout_secs: u64,
+    network_params: TxblastNetworkParams,
+    treasury_utxo_count: usize,
 ) -> Result<RuntimeFundingLocalStatus> {
     if minimum_recipient_zats == 0 {
         anyhow::bail!("--minimum-recipient-zats must be greater than 0");
@@ -246,31 +256,48 @@ async fn fund_runtime_keys_local(
         );
     }
 
-    let treasury_utxo =
-        select_spendable_treasury_utxo(&client, &treasury_key, current_height, &mut coinbase_cache)
-            .await?;
+    let treasury_utxos = select_spendable_treasury_utxos(
+        &client,
+        &treasury_key,
+        current_height,
+        treasury_utxo_count,
+    )
+    .await?;
     let treasury_orchard_keys = derive_orchard_keys(&treasury_key.secret_key.secret_bytes())?;
 
-    let shield_value = treasury_utxo.satoshis.saturating_sub(shielding_fee(1));
+    let shield_inputs: Vec<ShieldingInput> = treasury_utxos
+        .iter()
+        .map(|utxo| ShieldingInput {
+            txid: utxo.txid.clone(),
+            output_index: utxo.output_index,
+            script: utxo.script.clone(),
+            value: utxo.satoshis,
+        })
+        .collect();
+    let shield_input_total: u64 = shield_inputs.iter().map(|input| input.value).sum();
+    let shield_value =
+        shield_input_total.saturating_sub(shielding_fee_multi(shield_inputs.len(), 1));
+    println!(
+        "[fund-runtime-keys] shielding {} treasury UTXOs worth {} zats",
+        shield_inputs.len(),
+        shield_input_total,
+    );
     if shield_value < minimum_recipient_zats.saturating_mul(runtime_keys.len() as u64) {
         anyhow::bail!(
             "treasury UTXO value {} is too small to fund {} runtime keys after Orchard shielding",
-            treasury_utxo.satoshis,
+            shield_input_total,
             runtime_keys.len(),
         );
     }
 
-    let shield_anchor = fetch_orchard_anchor(&client).await?;
+    let shield_anchor = fetch_orchard_anchor(&client, &network_params).await?;
     let shield_target_height = current_height.saturating_add(10);
-    let shield_submitted = build_and_send_shielding_tx(
-        TxblastNetworkParams::LocalGenesis,
+    let shield_submitted = build_and_send_shielding_tx_multi(
+        network_params,
         &client,
         &treasury_key,
         &treasury_orchard_keys,
-        &treasury_utxo.txid,
-        treasury_utxo.output_index,
-        &treasury_utxo.script,
-        treasury_utxo.satoshis,
+        &shield_inputs,
         &[PlannedOutput {
             role: crate::txblast::orchard::NoteRole::Reservoir,
             value: shield_value,
@@ -314,13 +341,27 @@ async fn fund_runtime_keys_local(
     let mut registry = LaneRegistry::default();
     let mut treasury = TreasuryInventory::default();
 
+    // A public chain is millions of blocks long, and the only note that matters
+    // was created by the shielding transaction above. Seed the commitment tree
+    // from the node's treestate at the previous block and scan just that block.
+    let scan_start = shield_height;
+    if scan_start > 1 {
+        let frontier_height = scan_start - 1;
+        let pool = ShieldedPool::at_height(&network_params, frontier_height.into());
+        seed_orchard_tree_from_treestate(&mut tree, &client, frontier_height, pool).await?;
+        next_position = tree
+            .frontier()
+            .map_err(|e| anyhow::anyhow!("seeded Orchard frontier read failed: {e:?}"))?
+            .tree_size();
+    }
+
     scan_block_range(
         &client,
         &treasury_orchard_keys,
         &mut tree,
         &mut next_position,
         &mut nullifier_index,
-        1,
+        scan_start,
         shield_height,
         &mut pending_txs,
         &mut registry,
@@ -375,7 +416,7 @@ async fn fund_runtime_keys_local(
 
     let funding_target_height = client.get_block_count().await?.saturating_add(10);
     let funding_txid = build_and_send_orchard_to_transparent_tx(
-        TxblastNetworkParams::LocalGenesis,
+        network_params,
         &client,
         &treasury_orchard_keys,
         &funding_note,
@@ -431,7 +472,12 @@ async fn fund_runtime_keys_local(
         funding_height,
         metadata.recipients.len(),
     );
-    verify_runtime_funding_local(
+    // The node-local view exists only when funding runs on a generator node,
+    // which holds a funded key of its own. Funding a fleet runs from a control
+    // machine instead, and there is no such key there. Every recipient was
+    // already checked against the minimum above, so report that instead of
+    // failing after the money has landed.
+    match verify_runtime_funding_local(
         rpc_endpoint,
         local_genesis_dir
             .to_str()
@@ -440,6 +486,42 @@ async fn fund_runtime_keys_local(
         Some(&funding_txid),
     )
     .await
+    {
+        Ok(status) => Ok(status),
+        Err(error) => {
+            println!("[fund-runtime-keys] no node-local funded key here ({error}); reporting the recipient view");
+            let info = client.get_blockchain_info().await?;
+            Ok(RuntimeFundingLocalStatus {
+                node: node_name(),
+                funded_key_name: format!("{} recipients", metadata.recipients.len()),
+                funded_address: String::new(),
+                minimum_recipient_zats,
+                best_height: info["blocks"].as_u64().map(|value| value as u32),
+                best_block_hash: info["bestblockhash"].as_str().map(ToOwned::to_owned),
+                observed_funding_txid: Some(funding_txid.clone()),
+                expected_funding_txid: Some(funding_txid.clone()),
+                funding_tx_visible: true,
+                funding_tx_confirmed: true,
+                funding_tx_confirmations: None,
+                funding_tx_blockhash: None,
+                spendable_non_coinbase_utxo_count: metadata
+                    .recipients
+                    .iter()
+                    .map(|recipient| recipient.spendable_non_coinbase_utxo_count)
+                    .sum(),
+                spendable_non_coinbase_balance_zats: metadata
+                    .recipients
+                    .iter()
+                    .map(|recipient| recipient.spendable_non_coinbase_balance_zats)
+                    .sum(),
+                immature_coinbase_utxo_count: 0,
+                immature_coinbase_balance_zats: 0,
+                ready: true,
+                stall_reason: None,
+                error: None,
+            })
+        }
+    }
 }
 
 fn read_existing_marker(path: &Path) -> Result<Option<String>> {
@@ -741,35 +823,40 @@ fn node_name() -> String {
         .unwrap_or_else(|| "unknown".to_owned())
 }
 
-async fn select_spendable_treasury_utxo(
+/// Pick up to `max_count` treasury UTXOs, largest first.
+///
+/// A UTXO deeper than the coinbase maturity window is spendable whether or not
+/// it is a coinbase output, so maturity is decided from the height the address
+/// index already reports. That matters at scale: a miner address accumulates
+/// thousands of UTXOs, and asking the node to classify each one costs one RPC
+/// round trip each.
+async fn select_spendable_treasury_utxos(
     client: &ZebraRpcClient,
     treasury_key: &FundedKey,
     current_height: u32,
-    coinbase_cache: &mut HashMap<String, bool>,
-) -> Result<AddressUtxo> {
-    let utxos = client
+    max_count: usize,
+) -> Result<Vec<AddressUtxo>> {
+    if max_count == 0 {
+        anyhow::bail!("--treasury-utxo-count must be greater than 0");
+    }
+    let mut utxos: Vec<AddressUtxo> = client
         .get_address_utxos(&treasury_key.address.to_string())
-        .await?;
-    let mut best = None;
+        .await?
+        .into_iter()
+        .filter(|utxo| current_height >= utxo.height.saturating_add(COINBASE_MATURITY))
+        .collect();
 
-    for utxo in utxos {
-        let is_coinbase = is_coinbase_transaction(client, &utxo.txid, coinbase_cache).await?;
-        if is_coinbase && current_height < utxo.height.saturating_add(COINBASE_MATURITY) {
-            continue;
-        }
-
-        if best
-            .as_ref()
-            .map(|candidate: &AddressUtxo| candidate.satoshis < utxo.satoshis)
-            .unwrap_or(true)
-        {
-            best = Some(utxo);
-        }
+    if utxos.is_empty() {
+        anyhow::bail!(
+            "no spendable treasury UTXO found for {}; every output is still inside the {} block coinbase maturity window",
+            treasury_key.address,
+            COINBASE_MATURITY,
+        );
     }
 
-    best.context(
-        "no spendable treasury UTXO found; make sure the cached bootstrap chain was loaded and miners are running",
-    )
+    utxos.sort_by(|a, b| b.satoshis.cmp(&a.satoshis));
+    utxos.truncate(max_count);
+    Ok(utxos)
 }
 
 fn transparent_address_for_runtime_key(key: &LocalGenesisFundedKey) -> Result<TransparentAddress> {
@@ -784,15 +871,19 @@ fn transparent_address_for_runtime_key(key: &LocalGenesisFundedKey) -> Result<Tr
     })
 }
 
-async fn fetch_orchard_anchor(client: &ZebraRpcClient) -> Result<orchard::Anchor> {
+async fn fetch_orchard_anchor(
+    client: &ZebraRpcClient,
+    network_params: &TxblastNetworkParams,
+) -> Result<orchard::Anchor> {
     let height = client.get_block_count().await?;
     if height == 0 {
         return Ok(orchard::Anchor::empty_tree());
     }
 
+    let pool = ShieldedPool::at_height(network_params, height.into());
     let treestate = client.z_get_treestate(height).await?;
     let root_hex = treestate
-        .pointer("/orchard/commitments/finalRoot")
+        .pointer(&format!("/{}/commitments/finalRoot", pool.treestate_key()))
         .and_then(|v| v.as_str())
         .unwrap_or("");
     if root_hex.is_empty()
