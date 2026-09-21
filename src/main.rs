@@ -82,6 +82,14 @@ enum Commands {
         #[arg(long)]
         pow_sol_per_sec: Option<f64>,
 
+        /// Per-miner rate for the seed blocks' target when NU7 is scheduled
+        /// (the chain opens at NU6.3's 75 s for this rate). Defaults to the
+        /// rate the limit is calibrated with. The seed target carries no stall
+        /// risk, since the adjustment can loosen it up to the limit, so it can
+        /// use the expected pre-NU7 rate while the limit stays conservative.
+        #[arg(long)]
+        pow_seed_sol_per_sec: Option<f64>,
+
         /// Schedule NU7 this many blocks after the first live-mined block. The
         /// seeded chain stays on NU6.3 and its timestamps use NU6.3's 75 s
         /// spacing; proof-of-work calibration still targets the configured
@@ -1247,6 +1255,7 @@ async fn main() -> Result<()> {
             pow_adjust,
             pow_fleet_discount,
             pow_sol_per_sec,
+            pow_seed_sol_per_sec,
             nu7_activation_offset,
             nsm_reissuance_offset,
             directory,
@@ -1259,6 +1268,7 @@ async fn main() -> Result<()> {
                 adjust_fraction: pow_adjust,
                 fleet_discount: pow_fleet_discount,
                 sol_per_sec: pow_sol_per_sec,
+                seed_sol_per_sec: pow_seed_sol_per_sec,
             };
             commands::genesis::run(
                 &zebrad_binary,

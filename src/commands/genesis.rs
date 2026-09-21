@@ -49,6 +49,9 @@ pub struct PowCalibrationCli {
     /// (`2^256 / pow_limit / observed_spacing / miners`), stating it here is
     /// both accurate and repeatable.
     pub sol_per_sec: Option<f64>,
+    /// Per-miner rate for the seed blocks' 75 s target when NU7 is scheduled.
+    /// `None` uses the limit's rate.
+    pub seed_sol_per_sec: Option<f64>,
 }
 
 pub fn run(
@@ -131,16 +134,27 @@ pub fn run(
                     num_miners: calibration.num_miners,
                     target_spacing_secs: NU6_3_TARGET_SPACING_SECS,
                     target_adjust_fraction: calibration.target_adjust_fraction,
-                    sol_per_sec_override: Some(calibration.sol_per_sec_per_thread),
+                    sol_per_sec_override: Some(
+                        pow_calibration
+                            .seed_sol_per_sec
+                            .unwrap_or(calibration.sol_per_sec_per_thread),
+                    ),
                     ..Default::default()
                 })
                 .context("seed difficulty calibration failed")?;
                 println!(
-                    "seed difficulty target={} (spacing={}s, same rate); limit stays at {}s",
+                    "seed difficulty target={} (spacing={}s, sol/s={:.3}); limit stays at {}s",
                     seed.target_difficulty_limit_hex,
                     NU6_3_TARGET_SPACING_SECS,
+                    seed.sol_per_sec_per_thread,
                     calibration.target_spacing_secs,
                 );
+                if seed.target_difficulty_limit_hex > calibration.target_difficulty_limit_hex {
+                    anyhow::bail!(
+                        "the seed target is looser than the limit; \
+                         --pow-seed-sol-per-sec is too low for this limit"
+                    );
+                }
                 Some(calibration_target_bytes(&seed)?)
             } else {
                 None
