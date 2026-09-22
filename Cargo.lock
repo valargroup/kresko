@@ -1342,7 +1342,7 @@ checksum = "4df6f98652d30167eaeea34d77b730e07c8caba6df17bd4551842b9b8da01deb"
 [[package]]
 name = "cpu-equihash-solver"
 version = "0.3.0"
-source = "git+https://github.com/valargroup/librustzcash?rev=3694d47ebee420b7dbeea9e92e642733213354d1#3694d47ebee420b7dbeea9e92e642733213354d1"
+source = "git+https://github.com/valargroup/librustzcash?rev=088d048df716fc45b6bd144d335eef7f4a406c6c#088d048df716fc45b6bd144d335eef7f4a406c6c"
 dependencies = [
  "blake2b_simd",
  "cc",
@@ -3365,6 +3365,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap",
+ "cpu-equihash-solver",
  "dotenvy",
  "ff 0.14.0",
  "futures",

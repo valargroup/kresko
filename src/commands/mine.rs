@@ -349,9 +349,12 @@ pub async fn run_with(
         // 4. Solve in a blocking thread
         let solve_start = Instant::now();
         let solver = options.solver.clone();
-        let solve_result = tokio::task::spawn_blocking(move || solver.solve(header, action_rx))
-            .await
-            .context("solver thread panicked")?;
+        let (solve_result, solution_ready_at) = tokio::task::spawn_blocking(move || {
+            let result = solver.solve(header, action_rx);
+            (result, now_unix_ms())
+        })
+        .await
+        .context("solver thread panicked")?;
 
         let solve_time = solve_start.elapsed();
         let (mempool_transactions, mempool_bytes) = if mempool_probe.is_finished() {
@@ -380,6 +383,31 @@ pub async fn run_with(
                 );
 
                 let block_hash = format!("{}", block::Hash::from(&solved_header));
+                log_entry(
+                    &mut log_file,
+                    &MineLogEntry {
+                        ts_unix_ms: solution_ready_at,
+                        height: template_height,
+                        event: "solution_ready",
+                        solve_time_ms: Some(solve_time.as_millis()),
+                        block_hash: Some(block_hash.clone()),
+                        submit_result: None,
+                        transactions: Some(tx_count),
+                        transaction_bytes: Some(tx_bytes),
+                        template_prev_hash: template_summary.previous_block_hash.clone(),
+                        template_longpollid: template_summary.longpollid.clone(),
+                        mempool_transactions,
+                        mempool_bytes,
+                        cancel_action: None,
+                        cancel_reason: None,
+                        cancel_latency_ms: None,
+                        next_height: None,
+                        next_transactions: None,
+                        next_transaction_bytes: None,
+                        next_prev_hash: None,
+                        error: None,
+                    },
+                );
                 let block_bytes = block
                     .serialize_with_header(&solved_header)
                     .context("failed to serialize solved block")?;
@@ -1810,12 +1838,24 @@ mod tests {
             "the submitted block extends the superseded tip"
         );
 
-        let submitted_row = std::fs::read_to_string(log_path)
+        let rows: Vec<serde_json::Value> = std::fs::read_to_string(log_path)
             .expect("miner wrote its structured log")
             .lines()
             .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-            .find(|row| row["event"] == "solution_found")
+            .collect();
+        let ready_index = rows
+            .iter()
+            .position(|row| row["event"] == "solution_ready")
+            .expect("miner recorded solver completion before submission");
+        let submitted_index = rows
+            .iter()
+            .position(|row| row["event"] == "solution_found")
             .expect("miner recorded the stale submitted solution");
+        let ready_row = &rows[ready_index];
+        let submitted_row = &rows[submitted_index];
+        assert!(ready_index < submitted_index);
+        assert!(ready_row["ts_unix_ms"].as_u64() <= submitted_row["ts_unix_ms"].as_u64());
+        assert_eq!(ready_row["block_hash"], submitted_row["block_hash"]);
         assert_eq!(submitted_row["cancel_action"], "stop_now");
     }
 

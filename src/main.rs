@@ -360,6 +360,10 @@ enum Commands {
         /// because a single solver call is not interrupted.
         #[arg(long, default_value_t = 10.0)]
         min_seconds: f64,
+
+        /// Emit exact counts and elapsed time as JSON for fleet calibration.
+        #[arg(long)]
+        json: bool,
     },
 
     /// Run a Monte Carlo matrix and write one aggregate CSV row per run
@@ -1416,12 +1420,17 @@ async fn main() -> Result<()> {
         Commands::PowBench {
             equihash_params,
             min_seconds,
+            json,
         } => {
             let equihash_params: config::EquihashParameterSet = equihash_params.parse()?;
             let result = pow_tuning::benchmark_equihash_solver(pow_tuning::PowBenchInputs {
                 equihash_params,
                 min_seconds,
             })?;
+            if json {
+                println!("{}", serde_json::to_string(&result)?);
+                return Ok(());
+            }
             let (n, k) = match result.equihash_params {
                 config::EquihashParameterSet::Common => (200, 9),
                 config::EquihashParameterSet::Regtest => (48, 5),

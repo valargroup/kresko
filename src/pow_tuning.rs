@@ -18,11 +18,13 @@
 use std::{hint::black_box, time::Instant};
 
 use anyhow::{Context, Result};
+use cpu_equihash_solver::tromp::{CancellableSolveOutcome, solve_200_9_cancellable};
 use hex::FromHex;
 use zebra_chain::{
     block::{self, Header},
     fmt::HexDebug,
     parameters::Network,
+    serialization::ZcashSerialize,
     work::{
         difficulty::{CompactDifficulty, ExpandedDifficulty, U256},
         equihash::Solution,
@@ -326,7 +328,7 @@ pub struct PowBenchInputs {
 }
 
 /// Outcome of [`benchmark_equihash_solver`].
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct PowBenchResult {
     pub equihash_params: EquihashParameterSet,
     /// Number of nonce solver rounds attempted.
@@ -367,41 +369,47 @@ pub fn benchmark_equihash_solver(inputs: PowBenchInputs) -> Result<PowBenchResul
     let max_target = ExpandedDifficulty::from(U256::MAX);
 
     let started = Instant::now();
-    let mut next_nonce = 0u64;
+    let mut nonces = benchmark_nonces(rand::random());
     let mut nonce_trials = 0usize;
     let mut equihash_solutions = 0usize;
     let mut mining_candidates = 0usize;
 
     while started.elapsed().as_secs_f64() < inputs.min_seconds || mining_candidates == 0 {
-        let nonce = nonce_from_counter(next_nonce);
-        next_nonce = next_nonce.wrapping_add(1);
-        header.nonce = HexDebug(nonce);
-        nonce_trials = nonce_trials.saturating_add(1);
-
-        let Ok(solved_headers) = Solution::solve(header, || Ok(())) else {
-            continue;
+        let mut serialized = Vec::new();
+        header.zcash_serialize(&mut serialized)?;
+        let solved = solve_200_9_cancellable(
+            &serialized[..Solution::INPUT_LENGTH],
+            || {
+                let nonce = nonces.next()?;
+                header.nonce = HexDebug(nonce);
+                Some(nonce)
+            },
+            |_| false,
+        )
+        .context("Equihash benchmark could not allocate solver state")?;
+        nonce_trials = nonce_trials.saturating_add(
+            usize::try_from(solved.passes_completed()).context("nonce count exceeds usize")?,
+        );
+        let CancellableSolveOutcome::Completed(solutions) = solved.into_outcome() else {
+            anyhow::bail!("benchmark unexpectedly cancelled an Equihash pass");
         };
-        equihash_solutions = equihash_solutions.saturating_add(solved_headers.len());
-        for solved_header in solved_headers {
-            let hash = solved_header.hash();
-            if solved_header
+        anyhow::ensure!(!solutions.is_empty(), "benchmark exhausted its nonce space");
+        equihash_solutions = equihash_solutions.saturating_add(solutions.len());
+        for solution in solutions {
+            header.solution = Solution::from_bytes(&solution)
+                .context("solver returned an invalid solution length")?;
+            header
                 .solution
-                .check(&solved_header, &network)
-                .is_ok()
-            {
-                black_box(hash <= max_target);
-                mining_candidates = mining_candidates.saturating_add(1);
-            }
+                .check(&header, &network)
+                .context("solver returned an invalid Equihash solution")?;
+            black_box(header.hash() <= max_target);
+            mining_candidates = mining_candidates.saturating_add(1);
         }
     }
 
     let elapsed_secs = started.elapsed().as_secs_f64();
-    // `Solution::solve` returns only the solutions that meet the header's
-    // difficulty and silently moves past nonces where none do. At `207fffff`
-    // about half pass, so the returned count is half the solver's real output.
-    // Scale by the known pass probability; without this the bench reported
-    // ~0.5x the rate mining achieves (NU7 experiment, 2026-09-21).
-    let pass_probability = benchmark_pass_probability()?;
+    // Count candidates before the difficulty filter. The nonce iterator survives
+    // solver calls, including calls that consume multiple empty passes.
     if elapsed_secs <= 0.0 || nonce_trials == 0 || mining_candidates == 0 {
         anyhow::bail!(
             "Equihash benchmark produced an unusable measurement (params={}, nonce_trials={}, solutions={}, candidates={}, elapsed={}s)",
@@ -420,20 +428,17 @@ pub fn benchmark_equihash_solver(inputs: PowBenchInputs) -> Result<PowBenchResul
         mining_candidates,
         elapsed_secs,
         nonce_trials_per_sec: nonce_trials as f64 / elapsed_secs,
-        sol_per_sec: equihash_solutions as f64 / pass_probability / elapsed_secs,
-        mining_candidates_per_sec: mining_candidates as f64 / pass_probability / elapsed_secs,
+        sol_per_sec: equihash_solutions as f64 / elapsed_secs,
+        mining_candidates_per_sec: mining_candidates as f64 / elapsed_secs,
     })
 }
 
 /// Compact difficulty of the benchmark header.
 const BENCHMARK_DIFFICULTY_HEX: &str = "207fffff";
 
-/// Probability that one Equihash solution meets [`BENCHMARK_DIFFICULTY_HEX`].
-fn benchmark_pass_probability() -> Result<f64> {
-    let compact = u32::from_str_radix(BENCHMARK_DIFFICULTY_HEX, 16)?;
-    let exponent = (compact >> 24) as i32;
-    let mantissa = f64::from(compact & 0x007f_ffff);
-    Ok(mantissa * 2f64.powi(8 * (exponent - 3) - 256))
+/// Keep one nonce sequence across solver calls; randomize its start per process.
+fn benchmark_nonces(start: u64) -> impl Iterator<Item = [u8; 32]> {
+    std::iter::successors(Some(start), |nonce| nonce.checked_add(1)).map(nonce_from_counter)
 }
 
 fn benchmark_header(_network: &Network) -> Result<Header> {
@@ -786,21 +791,48 @@ mod tests {
 
     #[test]
     fn local_measurement_uses_requested_equihash_params() {
-        let measured = measure_local_sol_per_sec(EquihashParameterSet::Regtest, 0.001, None)
-            .expect("regtest solver benchmark should produce a measurement");
+        let measured = measure_local_sol_per_sec(EquihashParameterSet::Common, 0.001, None)
+            .expect("common solver benchmark should produce a measurement");
 
-        assert_eq!(measured.equihash_params, EquihashParameterSet::Regtest);
+        assert_eq!(measured.equihash_params, EquihashParameterSet::Common);
         assert!(measured.total_solves > 0);
         assert!(measured.local_sol_per_sec > 0.0);
         assert_eq!(
             measured.fleet_discount,
-            default_local_to_fleet_discount(EquihashParameterSet::Regtest)
+            default_local_to_fleet_discount(EquihashParameterSet::Common)
         );
     }
 
     #[test]
-    fn benchmark_pass_probability_is_about_one_half() {
-        let p = benchmark_pass_probability().expect("valid compact");
-        assert!((p - 0.5).abs() < 1e-6, "p = {p}");
+    fn benchmark_nonce_sequence_survives_multi_pass_calls() {
+        let mut nonces = benchmark_nonces(10);
+        let first_call: Vec<_> = nonces.by_ref().take(3).collect();
+        let second_call: Vec<_> = nonces.by_ref().take(2).collect();
+        assert_eq!(
+            first_call,
+            (10..13).map(nonce_from_counter).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            second_call,
+            (13..15).map(nonce_from_counter).collect::<Vec<_>>()
+        );
+        assert_eq!(benchmark_nonces(u64::MAX).count(), 1);
+    }
+
+    #[test]
+    fn benchmark_counts_unfiltered_valid_candidates() {
+        let result = benchmark_equihash_solver(PowBenchInputs {
+            equihash_params: EquihashParameterSet::Common,
+            min_seconds: 0.001,
+        })
+        .expect("common solver benchmark succeeds");
+        assert!(result.nonce_trials > 0);
+        assert!(result.mining_candidates > 0);
+        assert_eq!(result.equihash_solutions, result.mining_candidates);
+        assert_eq!(
+            result.sol_per_sec,
+            result.equihash_solutions as f64 / result.elapsed_secs
+        );
+        assert_eq!(result.mining_candidates_per_sec, result.sol_per_sec);
     }
 }

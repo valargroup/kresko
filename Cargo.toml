@@ -10,6 +10,7 @@ aws-sdk-s3 = "1"
 aws-smithy-types = "1"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
+cpu-equihash-solver = { version = "0.3", git = "https://github.com/valargroup/librustzcash", rev = "088d048df716fc45b6bd144d335eef7f4a406c6c", features = ["solver"] }
 dotenvy = "0.15"
 futures = "0.3"
 rand = "0.9"
@@ -31,9 +32,9 @@ chrono = { version = "0.4", default-features = false }
 # Kept under the `zebra_*` extern names via `package =` so the existing
 # `zebra_chain::...` paths throughout this crate keep compiling; Zakura is the
 # continuation of these crates under a new name.
-zebra-chain = { package = "zakura-chain", path = "../zakura.nu7-exp/crates/zakura-chain", features = ["internal-miner"] }
-zebrad = { package = "zakura", path = "../zakura.nu7-exp/crates/zakurad" }
-zebra-jsonl-trace = { package = "zakura-jsonl-trace", path = "../zakura.nu7-exp/crates/zakura-jsonl-trace" }
+zebra-chain = { package = "zakura-chain", path = "../../valar/zakura.nu7-longrun/crates/zakura-chain", features = ["internal-miner"] }
+zebrad = { package = "zakura", path = "../../valar/zakura.nu7-longrun/crates/zakurad" }
+zebra-jsonl-trace = { package = "zakura-jsonl-trace", path = "../../valar/zakura.nu7-longrun/crates/zakura-jsonl-trace" }
 # The Common stack zakura uses (zakura#1093), so the transaction builder signs
 # with the NU7 consensus branch id the node enforces.
 zcash_primitives = { package = "zakura-primitives", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd", features = ["transparent-inputs"] }
@@ -56,5 +57,4 @@ rand_core_06 = { package = "rand_core", version = "0.6" }
 # The Common transaction builder takes rand_core 0.10 RNGs.
 rand_core_10 = { package = "rand_core", version = "0.10" }
 getrandom_04 = { package = "getrandom", version = "0.4", features = ["sys_rng"] }
-
 
