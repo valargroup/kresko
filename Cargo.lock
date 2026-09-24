@@ -1340,17 +1340,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4df6f98652d30167eaeea34d77b730e07c8caba6df17bd4551842b9b8da01deb"
 
 [[package]]
-name = "cpu-equihash-solver"
-version = "0.3.0"
-source = "git+https://github.com/valargroup/librustzcash?rev=088d048df716fc45b6bd144d335eef7f4a406c6c#088d048df716fc45b6bd144d335eef7f4a406c6c"
-dependencies = [
- "blake2b_simd",
- "cc",
- "corez",
- "document-features",
-]
-
-[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1596,7 +1585,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead"
 dependencies = [
  "data-encoding",
- "syn 2.0.117",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -3365,7 +3354,6 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap",
- "cpu-equihash-solver",
  "dotenvy",
  "ff 0.14.0",
  "futures",
@@ -3389,6 +3377,7 @@ dependencies = [
  "zakura-address",
  "zakura-bls12-381",
  "zakura-chain",
+ "zakura-equihash",
  "zakura-jsonl-trace",
  "zakura-jubjub",
  "zakura-orchard",
@@ -7657,7 +7646,7 @@ dependencies = [
 
 [[package]]
 name = "zakura"
-version = "1.5.0-rc0"
+version = "1.5.0"
 dependencies = [
  "abscissa_core",
  "bytes",
@@ -7722,8 +7711,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-address"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "bech32",
  "bs58",
@@ -7735,14 +7724,14 @@ dependencies = [
 
 [[package]]
 name = "zakura-assets"
-version = "0.3489716.0"
+version = "0.3490665.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85caa866537965fa96a0ea14eebc6c1cbe083afd82d15dc65dc853e210b8d322"
+checksum = "5c36524cc7f4d34f23d8ebbd670dd09530acdaf0319fd0bcd7abfd9cd7d84ec6"
 
 [[package]]
 name = "zakura-bellman"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "bitvec",
  "blake2s_simd",
@@ -7757,8 +7746,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-bls12-381"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "ff 0.14.0",
  "group 0.14.0",
@@ -7769,7 +7758,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-chain"
-version = "9.0.0-rc0"
+version = "8.0.0"
 dependencies = [
  "bech32",
  "bitflags",
@@ -7781,7 +7770,6 @@ dependencies = [
  "bs58",
  "byteorder",
  "chrono",
- "cpu-equihash-solver",
  "derive-getters",
  "dirs",
  "ed25519-zebra",
@@ -7812,6 +7800,7 @@ dependencies = [
  "uint 0.10.0",
  "x25519-dalek",
  "zakura-address",
+ "zakura-equihash",
  "zakura-halo2-proofs",
  "zakura-jubjub",
  "zakura-orchard",
@@ -7829,7 +7818,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-consensus"
-version = "10.0.0-rc0"
+version = "9.0.0"
 dependencies = [
  "blake2b_simd",
  "chrono",
@@ -7870,9 +7859,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "zakura-equihash"
+version = "0.3.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
+dependencies = [
+ "blake2b_simd",
+ "cc",
+ "corez",
+ "document-features",
+]
+
+[[package]]
 name = "zakura-halo2-gadgets"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "arrayvec",
  "ff 0.14.0",
@@ -7886,13 +7886,13 @@ dependencies = [
 
 [[package]]
 name = "zakura-halo2-legacy-pdqsort"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 
 [[package]]
 name = "zakura-halo2-poseidon"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "bitvec",
  "ff 0.14.0",
@@ -7902,8 +7902,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-halo2-proofs"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "blake2b_simd",
  "ff 0.14.0",
@@ -7918,7 +7918,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-header-chain"
-version = "3.0.0-rc0"
+version = "4.0.0"
 dependencies = [
  "chrono",
  "rayon",
@@ -8079,8 +8079,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-jubjub"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "bitvec",
  "ff 0.14.0",
@@ -8092,8 +8092,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-keys"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "bech32",
  "blake2b_simd",
@@ -8116,7 +8116,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-network"
-version = "8.0.0-rc0"
+version = "8.0.0"
 dependencies = [
  "bitflags",
  "blake2b_simd",
@@ -8155,7 +8155,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-node-services"
-version = "3.2.5-rc0"
+version = "4.0.0"
 dependencies = [
  "jsonrpsee-types",
  "reqwest 0.12.28",
@@ -8169,8 +8169,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-orchard"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "aes",
  "bitvec",
@@ -8205,16 +8205,16 @@ dependencies = [
 
 [[package]]
 name = "zakura-pairing"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "group 0.14.0",
 ]
 
 [[package]]
 name = "zakura-pasta-curves"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "blake2b_simd",
  "cc",
@@ -8229,15 +8229,14 @@ dependencies = [
 
 [[package]]
 name = "zakura-primitives"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "blake2b_simd",
  "block-buffer 0.11.0-rc.3",
  "corez",
  "crypto-common 0.2.0-rc.1",
  "document-features",
- "equihash",
  "ff 0.14.0",
  "hex",
  "incrementalmerkletree",
@@ -8246,6 +8245,7 @@ dependencies = [
  "rand_core 0.10.1",
  "secp256k1",
  "sha2 0.10.9",
+ "zakura-equihash",
  "zakura-jubjub",
  "zakura-orchard",
  "zakura-protocol",
@@ -8259,8 +8259,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-proofs"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "blake2b_simd",
  "document-features",
@@ -8278,8 +8278,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-protocol"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "corez",
  "document-features",
@@ -8290,8 +8290,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-reddsa"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "blake2b_simd",
  "frost-rerandomized",
@@ -8307,8 +8307,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-redjubjub"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "rand_core 0.10.1",
  "serde",
@@ -8319,7 +8319,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-rpc"
-version = "11.0.0-rc0"
+version = "11.1.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -8380,8 +8380,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-sapling-crypto"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "aes",
  "bitvec",
@@ -8413,7 +8413,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-script"
-version = "3.2.4-rc0"
+version = "3.2.4"
 dependencies = [
  "libzcash_script",
  "rand 0.8.5",
@@ -8425,8 +8425,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-sinsemilla"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "group 0.14.0",
  "once_cell",
@@ -8436,7 +8436,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-state"
-version = "9.0.0-rc0"
+version = "10.0.0"
 dependencies = [
  "bincode",
  "chrono",
@@ -8500,8 +8500,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-transparent"
-version = "1.3.0-alpha.1"
-source = "git+https://github.com/zakura-core/common.git?rev=c4c255c4be5cacaad77b918a481cbf6d35b1f8fd#c4c255c4be5cacaad77b918a481cbf6d35b1f8fd"
+version = "2.0.0"
+source = "git+file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common?rev=5ddb8ad163cc82d7d644792c0842d9421de4de10#5ddb8ad163cc82d7d644792c0842d9421de4de10"
 dependencies = [
  "bip32",
  "bs58",

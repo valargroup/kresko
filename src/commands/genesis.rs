@@ -127,12 +127,13 @@ pub fn run(
             // until the adjustment catches up (`pow-simulate`: ~145 blocks). So
             // the seed blocks declare the 75 s target for the same rate, and the
             // limit stays loose enough for NU7's 25 s.
-            let seed_difficulty_target = if schedule.nu7_activation_offset.is_some()
-                && target_spacing_secs < NU6_3_TARGET_SPACING_SECS
+            let seed_spacing = seed_spacing(schedule, target_spacing_secs);
+            let seed_difficulty_target = if pow_calibration.seed_sol_per_sec.is_some()
+                || seed_spacing != target_spacing_secs
             {
                 let seed = pow_tuning::calibrate(&PowTuningInputs {
                     num_miners: calibration.num_miners,
-                    target_spacing_secs: NU6_3_TARGET_SPACING_SECS,
+                    target_spacing_secs: seed_spacing,
                     target_adjust_fraction: calibration.target_adjust_fraction,
                     sol_per_sec_override: Some(
                         pow_calibration
@@ -145,7 +146,7 @@ pub fn run(
                 println!(
                     "seed difficulty target={} (spacing={}s, sol/s={:.3}); limit stays at {}s",
                     seed.target_difficulty_limit_hex,
-                    NU6_3_TARGET_SPACING_SECS,
+                    seed_spacing,
                     seed.sol_per_sec_per_thread,
                     calibration.target_spacing_secs,
                 );
@@ -437,6 +438,14 @@ enum SeedingMode {
     },
 }
 
+fn seed_spacing(schedule: UpgradeSchedule, target_spacing_secs: u32) -> u32 {
+    match schedule.nu7_activation_offset {
+        Some(0) => 25,
+        Some(_) => NU6_3_TARGET_SPACING_SECS,
+        None => target_spacing_secs,
+    }
+}
+
 fn prepare_generated_local_genesis(
     config: &Config,
     miner_names: &[String],
@@ -446,14 +455,7 @@ fn prepare_generated_local_genesis(
     seeding: SeedingMode,
     schedule: UpgradeSchedule,
 ) -> Result<PreparedLocalGenesis> {
-    // A scheduled NU7 leaves the seeded chain on NU6.3, whose compiled spacing
-    // is 75 s. The seed timestamps must match it, or the difficulty adjustment
-    // rejects the first live-mined block. NU7 then brings its own 25 s spacing.
-    let seed_spacing_secs = if schedule.nu7_activation_offset.is_some() {
-        NU6_3_TARGET_SPACING_SECS
-    } else {
-        target_spacing_secs
-    };
+    let seed_spacing_secs = seed_spacing(schedule, target_spacing_secs);
     // Seed blocks are always generated with Equihash solving off, so this is
     // cheap regardless of mode. Contextual difficulty still needs a target limit
     // that is safe for the configured DAA averaging window.
@@ -917,76 +919,78 @@ mod tests {
     /// renders NU7 and the reissuance start relative to the first live block.
     #[test]
     fn scheduled_nu7_renders_offsets_from_the_first_live_block() {
-        let miner_names: Vec<String> = (0..4).map(|i| format!("miner-{i}")).collect();
-        let config = Config {
-            chain_id: "nu7-schedule-test".to_string(),
-            ..Config::default()
-        };
-        let mut target_difficulty_limit = [0u8; 32];
-        target_difficulty_limit[0] = 0x04;
-        target_difficulty_limit[1] = 0xec;
-        // Three times tighter: the 75 s target for the rate the limit assumes at 25 s.
-        let mut seed_difficulty_target = [0u8; 32];
-        seed_difficulty_target[0] = 0x01;
-        seed_difficulty_target[1] = 0xa4;
+        for (nu7_offset, reissuance_offset, spacing) in [(40, 190, 75), (0, 0, 25)] {
+            let miner_names: Vec<String> = (0..4).map(|i| format!("miner-{i}")).collect();
+            let config = Config {
+                chain_id: "nu7-schedule-test".to_string(),
+                ..Config::default()
+            };
+            let mut target_difficulty_limit = [0u8; 32];
+            target_difficulty_limit[0] = 0x04;
+            target_difficulty_limit[1] = 0xec;
+            // Three times tighter: the 75 s target for the rate the limit assumes at 25 s.
+            let mut seed_difficulty_target = [0u8; 32];
+            seed_difficulty_target[0] = 0x01;
+            seed_difficulty_target[1] = 0xa4;
 
-        let maturity_padding_blocks = 125;
-        let prepared = prepare_generated_local_genesis(
-            &config,
-            &miner_names,
-            maturity_padding_blocks,
-            25,
-            DaaConfig::default(),
-            SeedingMode::EnforcePowAfterSeededTip {
-                target_difficulty_limit,
-                seed_difficulty_target: Some(seed_difficulty_target),
-            },
-            UpgradeSchedule {
-                nu7_activation_offset: Some(40),
-                nsm_reissuance_offset: Some(190),
-            },
-        )
-        .expect("a scheduled NU7 should prepare a local genesis");
+            let maturity_padding_blocks = 125;
+            let prepared = prepare_generated_local_genesis(
+                &config,
+                &miner_names,
+                maturity_padding_blocks,
+                25,
+                DaaConfig::default(),
+                SeedingMode::EnforcePowAfterSeededTip {
+                    target_difficulty_limit,
+                    seed_difficulty_target: Some(seed_difficulty_target),
+                },
+                UpgradeSchedule {
+                    nu7_activation_offset: Some(nu7_offset),
+                    nsm_reissuance_offset: Some(reissuance_offset),
+                },
+            )
+            .expect("a scheduled NU7 should prepare a local genesis");
 
-        let first_live = miner_names.len() as u32 + 1 + maturity_padding_blocks;
-        assert_eq!(prepared.local_testnet.pow_start_height, Some(first_live));
-        assert_eq!(
-            prepared.local_testnet.nu7_activation_height,
-            Some(first_live + 40)
-        );
-        assert_eq!(
-            prepared.local_testnet.nsm_reissuance_height,
-            Some(first_live + 190)
-        );
-        assert_eq!(prepared.local_testnet.latest_upgrade, "NU6.3");
-        let seed = prepared
-            .local_genesis
-            .seed_difficulty_target
-            .as_deref()
-            .expect("a seed target tighter than the limit is recorded");
-        assert!(seed.starts_with("01a4"), "seed target {seed}");
-        assert_ne!(seed, prepared.local_genesis.target_difficulty_limit);
-        assert_eq!(prepared.local_testnet.post_blossom_pow_target_spacing, None);
-        assert_eq!(
-            prepared.local_genesis.target_spacing_secs,
-            Some(NU6_3_TARGET_SPACING_SECS)
-        );
+            let first_live = miner_names.len() as u32 + 1 + maturity_padding_blocks;
+            assert_eq!(prepared.local_testnet.pow_start_height, Some(first_live));
+            assert_eq!(
+                prepared.local_testnet.nu7_activation_height,
+                Some(first_live + nu7_offset)
+            );
+            assert_eq!(
+                prepared.local_testnet.nsm_reissuance_height,
+                Some(first_live + reissuance_offset)
+            );
+            assert_eq!(prepared.local_testnet.latest_upgrade, "NU6.3");
+            let seed = prepared
+                .local_genesis
+                .seed_difficulty_target
+                .as_deref()
+                .expect("a seed target tighter than the limit is recorded");
+            assert!(seed.starts_with("01a4"), "seed target {seed}");
+            assert_ne!(seed, prepared.local_genesis.target_difficulty_limit);
+            assert_eq!(prepared.local_testnet.post_blossom_pow_target_spacing, None);
+            assert_eq!(prepared.local_genesis.target_spacing_secs, Some(spacing));
 
-        let template = zebra_config::template_for(crate::config::NetworkKind::LocalGenesis)
-            .expect("template generation");
-        let rendered =
-            zebra_config::apply_local_testnet_parameters(&template, &prepared.local_testnet)
-                .expect("rendering the node config");
-        zebra_config::verify_local_testnet_parameters(&rendered, &prepared.local_testnet)
-            .expect("the rendered config must match the generated chain");
+            let template = zebra_config::template_for(crate::config::NetworkKind::LocalGenesis)
+                .expect("template generation");
+            let rendered =
+                zebra_config::apply_local_testnet_parameters(&template, &prepared.local_testnet)
+                    .expect("rendering the node config");
+            zebra_config::verify_local_testnet_parameters(&rendered, &prepared.local_testnet)
+                .expect("the rendered config must match the generated chain");
 
-        assert!(rendered.contains(&format!("NU7 = {}", first_live + 40)));
-        // Every upgrade through NU6.3 activates at the first live block: the
-        // seed blocks are pre-Overwinter. (`contains("\"NU6.3\" = 1")` would
-        // also match 130.)
-        assert!(rendered.contains(&format!("\"NU6.3\" = {first_live}\n")));
-        assert!(rendered.contains(&format!("nsm_reissuance_height = {}", first_live + 190)));
-        assert!(!rendered.contains("post_blossom_pow_target_spacing"));
+            assert!(rendered.contains(&format!("NU7 = {}", first_live + nu7_offset)));
+            // Every upgrade through NU6.3 activates at the first live block: the
+            // seed blocks are pre-Overwinter. (`contains("\"NU6.3\" = 1")` would
+            // also match 130.)
+            assert!(rendered.contains(&format!("\"NU6.3\" = {first_live}\n")));
+            assert!(rendered.contains(&format!(
+                "nsm_reissuance_height = {}",
+                first_live + reissuance_offset
+            )));
+            assert!(!rendered.contains("post_blossom_pow_target_spacing"));
+        }
     }
 
     /// The non-PoW path is unchanged: no start height, proof-of-work off.

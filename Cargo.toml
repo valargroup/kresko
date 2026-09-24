@@ -10,7 +10,7 @@ aws-sdk-s3 = "1"
 aws-smithy-types = "1"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
-cpu-equihash-solver = { version = "0.3", git = "https://github.com/valargroup/librustzcash", rev = "088d048df716fc45b6bd144d335eef7f4a406c6c", features = ["solver"] }
+cpu-equihash-solver = { package = "zakura-equihash", version = "0.3", git = "file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common", rev = "5ddb8ad163cc82d7d644792c0842d9421de4de10", features = ["solver"] }
 dotenvy = "0.15"
 futures = "0.3"
 rand = "0.9"
@@ -32,17 +32,17 @@ chrono = { version = "0.4", default-features = false }
 # Kept under the `zebra_*` extern names via `package =` so the existing
 # `zebra_chain::...` paths throughout this crate keep compiling; Zakura is the
 # continuation of these crates under a new name.
-zebra-chain = { package = "zakura-chain", path = "../../valar/zakura.nu7-longrun/crates/zakura-chain", features = ["internal-miner"] }
-zebrad = { package = "zakura", path = "../../valar/zakura.nu7-longrun/crates/zakurad" }
-zebra-jsonl-trace = { package = "zakura-jsonl-trace", path = "../../valar/zakura.nu7-longrun/crates/zakura-jsonl-trace" }
+zebra-chain = { package = "zakura-chain", path = "../../valar/zakura.nu7-first/crates/zakura-chain", features = ["internal-miner"] }
+zebrad = { package = "zakura", path = "../../valar/zakura.nu7-first/crates/zakurad" }
+zebra-jsonl-trace = { package = "zakura-jsonl-trace", path = "../../valar/zakura.nu7-first/crates/zakura-jsonl-trace" }
 # The Common stack zakura uses (zakura#1093), so the transaction builder signs
 # with the NU7 consensus branch id the node enforces.
-zcash_primitives = { package = "zakura-primitives", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd", features = ["transparent-inputs"] }
-zcash_protocol = { package = "zakura-protocol", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd" }
-zcash_address = { package = "zakura-address", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd" }
-zcash_transparent = { package = "zakura-transparent", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd" }
-orchard = { package = "zakura-orchard", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd" }
-sapling-crypto = { package = "zakura-sapling-crypto", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd" }
+zcash_primitives = { package = "zakura-primitives", features = ["transparent-inputs"], git = "file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common", rev = "5ddb8ad163cc82d7d644792c0842d9421de4de10" }
+zcash_protocol = { package = "zakura-protocol", git = "file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common", rev = "5ddb8ad163cc82d7d644792c0842d9421de4de10" }
+zcash_address = { package = "zakura-address", git = "file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common", rev = "5ddb8ad163cc82d7d644792c0842d9421de4de10" }
+zcash_transparent = { package = "zakura-transparent", git = "file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common", rev = "5ddb8ad163cc82d7d644792c0842d9421de4de10" }
+orchard = { package = "zakura-orchard", git = "file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common", rev = "5ddb8ad163cc82d7d644792c0842d9421de4de10" }
+sapling-crypto = { package = "zakura-sapling-crypto", git = "file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common", rev = "5ddb8ad163cc82d7d644792c0842d9421de4de10" }
 incrementalmerkletree = "0.8"
 shardtree = "0.6"
 zcash_note_encryption = "0.4.1"
@@ -51,8 +51,8 @@ zcash_note_encryption = "0.4.1"
 # element, so it tracks that side rather than its own Orchard stack, which is
 # still on 0.13.
 ff = "0.14"
-jubjub = { package = "zakura-jubjub", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd" }
-bls12_381 = { package = "zakura-bls12-381", git = "https://github.com/zakura-core/common.git", rev = "c4c255c4be5cacaad77b918a481cbf6d35b1f8fd" }
+jubjub = { package = "zakura-jubjub", git = "file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common", rev = "5ddb8ad163cc82d7d644792c0842d9421de4de10" }
+bls12_381 = { package = "zakura-bls12-381", git = "file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common", rev = "5ddb8ad163cc82d7d644792c0842d9421de4de10" }
 rand_core_06 = { package = "rand_core", version = "0.6" }
 # The Common transaction builder takes rand_core 0.10 RNGs.
 rand_core_10 = { package = "rand_core", version = "0.10" }

@@ -23,6 +23,8 @@ pub(crate) struct TreasurySnapshot {
 #[derive(Default)]
 pub(crate) struct LaneRegistry {
     next_lane_id: u64,
+    retry_height: Option<u32>,
+    deferred_notes: HashSet<String>,
     ready_lanes: Vec<TrackedNote>,
     reservoir_notes: Vec<TrackedNote>,
     drained_notes: u64,
@@ -73,6 +75,8 @@ impl LaneRegistry {
 
     pub(crate) fn reset_for_rebuild(&mut self) {
         self.next_lane_id = 0;
+        self.deferred_notes.clear();
+        self.retry_height = None;
         self.ready_lanes.clear();
         self.reservoir_notes.clear();
     }
@@ -121,12 +125,24 @@ impl LaneRegistry {
         tracked
     }
 
+    pub(crate) fn retry_at_height(&mut self, height: u32) {
+        if self.retry_height != Some(height) {
+            self.deferred_notes.clear();
+            self.retry_height = Some(height);
+        }
+    }
+
+    pub(crate) fn defer_failed_lane(&mut self, tracked: TrackedNote) {
+        self.deferred_notes.insert(tracked.note_id.clone());
+        self.requeue(tracked);
+    }
+
     pub(crate) fn take_ready_lane(&mut self) -> Option<TrackedNote> {
-        if let Some(tracked) = pop_highest_value(&mut self.ready_lanes) {
+        if let Some(tracked) = pop_available(&mut self.ready_lanes, &self.deferred_notes) {
             return Some(tracked);
         }
 
-        let mut tracked = pop_highest_value(&mut self.reservoir_notes)?;
+        let mut tracked = pop_available(&mut self.reservoir_notes, &self.deferred_notes)?;
         self.assign_lane_metadata(&mut tracked);
         Some(tracked)
     }
@@ -150,6 +166,15 @@ impl LaneRegistry {
         tracked.role = NoteRole::Lane;
         tracked.lane_id = Some(lane_id);
     }
+}
+
+fn pop_available(notes: &mut Vec<TrackedNote>, deferred: &HashSet<String>) -> Option<TrackedNote> {
+    let (idx, _) = notes
+        .iter()
+        .enumerate()
+        .filter(|(_, note)| !deferred.contains(&note.note_id))
+        .max_by_key(|(_, note)| note.value())?;
+    Some(notes.swap_remove(idx))
 }
 
 fn pop_highest_value(notes: &mut Vec<TrackedNote>) -> Option<TrackedNote> {
@@ -296,5 +321,68 @@ mod tests {
 
         inventory.refresh_discovered(vec![treasury("a:0", 100), treasury("b:0", 200)]);
         assert_eq!(inventory.backlog_count(), 1);
+    }
+}
+
+#[cfg(test)]
+mod lane_retry_tests {
+    use super::*;
+    use orchard::{
+        keys::{FullViewingKey, Scope, SpendingKey},
+        note::{RandomSeed, Rho},
+        value::NoteValue,
+    };
+    fn test_tracked_note(value_zats: u64, idx: usize) -> TrackedNote {
+        let sk = SpendingKey::from_bytes([7u8; 32]).unwrap();
+        let fvk = FullViewingKey::from(&sk);
+        let address = fvk.address_at(0u32, Scope::External);
+        let mut rho_bytes = [0u8; 32];
+        rho_bytes[0] = (idx as u8).wrapping_add(1);
+        let rho = Rho::from_bytes(&rho_bytes).unwrap();
+        let rseed = (1u8..=u8::MAX)
+            .find_map(|byte| {
+                let mut rseed_bytes = [0u8; 32];
+                rseed_bytes[0] = byte;
+                Option::<RandomSeed>::from(RandomSeed::from_bytes(rseed_bytes, &rho))
+            })
+            .expect("valid random seed");
+        let note = Option::<orchard::Note>::from(orchard::Note::from_parts(
+            address,
+            NoteValue::from_raw(value_zats),
+            rho,
+            rseed,
+            // V2 is the ZIP 212 Orchard plaintext. V3 is the Ironwood
+            // (ZIP 2005) format -- switching pools is a deliberate change,
+            // not a default.
+            orchard::note::NoteVersion::V2,
+        ))
+        .expect("valid test note");
+
+        TrackedNote {
+            note_id: format!("note-{idx}"),
+            parent_note_id: None,
+            origin_txid: format!("txid-{idx}"),
+            origin_action_idx: idx,
+            lane_id: None,
+            note,
+            position: Position::from(idx as u64),
+            role: NoteRole::Reservoir,
+            last_confirmation_height: 1,
+        }
+    }
+    #[test]
+    fn conflicting_high_value_lane_does_not_starve_other_lanes() {
+        let mut registry = LaneRegistry::default();
+        registry.requeue(test_tracked_note(90_000, 0));
+        registry.requeue(test_tracked_note(30_000, 1));
+        registry.retry_at_height(600);
+        let rejected = registry.take_ready_lane().unwrap();
+        assert_eq!(rejected.note_id, "note-0");
+        registry.defer_failed_lane(rejected);
+        assert_eq!(registry.take_ready_lane().unwrap().note_id, "note-1");
+        registry.retry_at_height(600);
+        assert!(registry.take_ready_lane().is_none());
+        registry.retry_at_height(601);
+        assert_eq!(registry.take_ready_lane().unwrap().note_id, "note-0");
     }
 }

@@ -1246,6 +1246,7 @@ pub async fn run(
         }
 
         let current = cursor.last_scanned_height();
+        registry.retry_at_height(current);
         if last_treasury_refresh_height != Some(current) {
             if let Err(e) = refresh_and_trace_treasury(
                 client,
@@ -1339,8 +1340,7 @@ pub async fn run(
             }
 
             let anchor = latest_checkpoint_anchor(&tree, &checkpoint)?;
-            let target_height =
-                super::local_target_height(current, TARGET_HEIGHT_OFFSET_BLOCKS);
+            let target_height = super::local_target_height(current, TARGET_HEIGHT_OFFSET_BLOCKS);
 
             // Determine how many items we can batch.
             let batch_capacity = std::cmp::min(
@@ -1645,7 +1645,7 @@ pub async fn run(
                                         needs_rescan = true;
                                         rescan_error = Some(error);
                                     }
-                                    registry.requeue(tracked.clone());
+                                    registry.defer_failed_lane(tracked.clone());
                                     tracer.trace_tracked_note(
                                         Some(current),
                                         "note_requeued",
