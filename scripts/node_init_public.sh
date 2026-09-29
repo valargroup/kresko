@@ -50,12 +50,19 @@ systemctl enable chrony
 systemctl start chrony
 
 KRESKO_SYSCTL_FILE="/etc/sysctl.d/60-kresko-network-defaults.conf"
-echo "=== Configuring default TCP and qdisc sysctls ==="
+echo "=== Configuring default TCP, UDP, and qdisc sysctls ==="
 cat >"$KRESKO_SYSCTL_FILE" <<'EOF'
 # Kresko public-node transport defaults.
 net.ipv4.tcp_slow_start_after_idle=0
 net.ipv4.tcp_congestion_control=cubic
 net.core.default_qdisc=fq_codel
+# Zakura P2P runs QUIC over one UDP socket that inherits these defaults.
+# The stock 212992-byte buffers overflow during block bursts, and QUIC
+# treats each dropped datagram as congestion loss.
+net.core.rmem_default=16777216
+net.core.wmem_default=16777216
+net.core.rmem_max=67108864
+net.core.wmem_max=67108864
 EOF
 sysctl --load "$KRESKO_SYSCTL_FILE"
 
