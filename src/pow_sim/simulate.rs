@@ -79,12 +79,14 @@ pub fn simulate(inputs: &SimulationInputs) -> SimulationResult {
             .map_or(0, |window| window + inputs.daa.tuning.pow_median_block_span),
     );
     let seed_count = if inputs.initial_target.is_some() {
-        inputs.seed_blocks.unwrap_or(largest_context).max(largest_context)
+        inputs
+            .seed_blocks
+            .unwrap_or(largest_context)
+            .max(largest_context)
     } else {
         0
     };
-    let mut history: Vec<BlockState> =
-        Vec::with_capacity(seed_count + inputs.blocks as usize);
+    let mut history: Vec<BlockState> = Vec::with_capacity(seed_count + inputs.blocks as usize);
     if let Some(initial) = inputs.initial_target {
         let spacing = f64::from(inputs.daa.target_spacing_secs);
         for k in (0..seed_count).rev() {
