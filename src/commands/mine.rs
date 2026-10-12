@@ -237,6 +237,7 @@ pub async fn run_with(
     let mut stale_cancellations: u64 = 0;
     let mut stale_solutions: u64 = 0;
     let mut runs: u64 = 0;
+    let nonce_prefix: [u8; 16] = rand::random();
 
     'mine: loop {
         if options.max_runs.is_some_and(|max| runs >= max) {
@@ -322,7 +323,14 @@ pub async fn run_with(
             }
         };
 
-        let header = block.header;
+        let mut header = block.header;
+        header.nonce = HexDebug(work_nonce(nonce_prefix, runs));
+        writeln!(&mut log_file, "{}", serde_json::json!({
+            "ts_unix_ms": now_unix_ms(), "event": "nonce_work",
+            "height": template_height, "nonce_start": hex::encode(*header.nonce),
+            "work_id": block.work_id, "template_prev_hash": template_summary.previous_block_hash,
+        }))?;
+        log_file.flush()?;
 
         // 3. Keep long-polling until work becomes invalid or the freshness
         // policy requests a nonce-boundary refresh.
@@ -850,6 +858,13 @@ fn classify_cancellation(current: &TemplateSummary, next: &TemplateSummary) -> &
     } else {
         "template_changed"
     }
+}
+
+fn work_nonce(prefix: [u8; 16], template_sequence: u64) -> [u8; 32] {
+    let mut nonce = [0; 32];
+    nonce[..16].copy_from_slice(&prefix);
+    nonce[16..24].copy_from_slice(&template_sequence.to_be_bytes());
+    nonce
 }
 
 fn solver_action_label(action: SolverAction) -> &'static str {
@@ -1467,6 +1482,16 @@ mod tests {
         })
         .await
         .expect("supervisor published the expected action");
+    }
+
+    #[test]
+    fn template_nonce_ranges_do_not_overlap() {
+        let first = super::work_nonce([1; 16], 1);
+        let next_template = super::work_nonce([1; 16], 2);
+        let other_process = super::work_nonce([2; 16], 1);
+        assert_ne!(&first[..24], &next_template[..24]);
+        assert_ne!(&first[..24], &other_process[..24]);
+        assert_eq!(&first[24..], &[0; 8]);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -10,7 +10,7 @@ aws-sdk-s3 = "1"
 aws-smithy-types = "1"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
-cpu-equihash-solver = { package = "zakura-equihash", version = "0.3", git = "file:///home/evan/src/valar/experiments/nu7-activation-and-perf/runs/nu7-first-80n-20260924/sources/common", rev = "5ddb8ad163cc82d7d644792c0842d9421de4de10", features = ["solver"] }
+cpu-equihash-solver = { package = "zakura-equihash", path = "../../valar/common.iroh-free-smoke/crates/equihash", features = ["solver"] }
 dotenvy = "0.15"
 futures = "0.3"
 rand = "0.9"
@@ -32,9 +32,9 @@ chrono = { version = "0.4", default-features = false }
 # Kept under the `zebra_*` extern names via `package =` so the existing
 # `zebra_chain::...` paths throughout this crate keep compiling; Zakura is the
 # continuation of these crates under a new name.
-zebra-chain = { package = "zakura-chain", path = "../../valar/zakura.nu7-mixed/crates/zakura-chain", features = ["internal-miner"] }
-zebrad = { package = "zakura", path = "../../valar/zakura.nu7-mixed/crates/zakurad" }
-zebra-jsonl-trace = { package = "zakura-jsonl-trace", path = "../../valar/zakura.nu7-mixed/crates/zakura-jsonl-trace" }
+zebra-chain = { package = "zakura-chain", path = "../../valar/zakura.iroh-free-smoke/crates/zakura-chain", features = ["internal-miner"] }
+zebrad = { package = "zakura", path = "../../valar/zakura.iroh-free-smoke/crates/zakurad" }
+zebra-jsonl-trace = { package = "zakura-jsonl-trace", path = "../../valar/zakura.iroh-free-smoke/crates/zakura-jsonl-trace" }
 # The Common stack zakura uses (zakura#1093), so the transaction builder signs
 # with the NU7 consensus branch id the node enforces.
 zcash_primitives = { package = "zakura-primitives", features = ["transparent-inputs"], version = "=2.2.0" }

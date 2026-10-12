@@ -206,12 +206,7 @@ pub fn default_tier() -> String {
 
 impl Instance {
     pub fn parsed_hostname(&self) -> String {
-        let parts: Vec<&str> = self.name.split('-').collect();
-        if parts.len() >= 2 {
-            format!("{}-{}", parts[0], parts[1])
-        } else {
-            self.name.clone()
-        }
+        self.name.clone()
     }
 }
 
