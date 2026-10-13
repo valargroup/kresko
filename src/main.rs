@@ -871,6 +871,10 @@ enum TxblastRecoverCommand {
         #[arg(long)]
         from_height: Option<u32>,
 
+        /// RPC endpoint to scan or submit through
+        #[arg(long)]
+        rpc_endpoint: Option<String>,
+
         /// Output JSON
         #[arg(long)]
         json: bool,
@@ -888,6 +892,10 @@ enum TxblastRecoverCommand {
         /// Scan start height override
         #[arg(long)]
         from_height: Option<u32>,
+
+        /// RPC endpoint to scan or submit through
+        #[arg(long)]
+        rpc_endpoint: Option<String>,
 
         /// Show what would happen without moving funds
         #[arg(long)]
@@ -1187,6 +1195,7 @@ async fn run_txblast_command(command: TxblastCommand, directory: &str) -> Result
             TxblastRecoverCommand::Inventory {
                 directory: state_directory,
                 from_height,
+                rpc_endpoint,
                 json,
             } => {
                 commands::txblast_public::recover_inventory(
@@ -1194,6 +1203,7 @@ async fn run_txblast_command(command: TxblastCommand, directory: &str) -> Result
                     commands::txblast_public::RecoverInventoryArgs {
                         directory: state_directory,
                         from_height,
+                        rpc_endpoint,
                         json,
                     },
                 )
@@ -1203,6 +1213,7 @@ async fn run_txblast_command(command: TxblastCommand, directory: &str) -> Result
                 directory: state_directory,
                 to,
                 from_height,
+                rpc_endpoint,
                 dry_run,
                 mainnet_i_understand_recovery,
             } => {
@@ -1212,6 +1223,7 @@ async fn run_txblast_command(command: TxblastCommand, directory: &str) -> Result
                         directory: state_directory,
                         to,
                         from_height,
+                        rpc_endpoint,
                         dry_run,
                         mainnet_i_understand_recovery,
                     },

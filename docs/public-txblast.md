@@ -64,8 +64,8 @@ transparent funds only as the initial deposit and final withdrawal boundary.
 
    ```bash
    kresko txblast withdraw --to <transparent-address> --amount all
-   kresko txblast recover inventory --from-height <height>
-   kresko txblast recover sweep --to <transparent-address> --from-height <height>
+   kresko txblast recover inventory --from-height <height> --rpc-endpoint http://<node-ip>:8232
+   kresko txblast recover sweep --to <transparent-address> --from-height <height> --rpc-endpoint http://<node-ip>:8232
    ```
 
    Mainnet withdrawal and recovery sweep require their explicit mainnet guard
@@ -75,8 +75,9 @@ transparent funds only as the initial deposit and final withdrawal boundary.
 
 The durable funding path stays Orchard-shielded after the initial transparent
 deposit is shielded. Runtime agents spend and replenish Orchard lane inventory.
-Withdrawal and recovery sweep spend Orchard notes directly to the requested
-transparent address.
+Withdrawal spends Orchard notes directly to the requested transparent address.
+Recovery sweep does the same for shielded inventory and also sweeps any
+unshielded transparent UTXOs still present on the control deposit key.
 
 `prepare` supports multiple deposits and repeated top-up fanouts. It scans
 existing hot Orchard lane inventory first, then fans out only the per-node lane
@@ -110,3 +111,5 @@ using `recovery.json`.
   withdrawal transaction is sent.
 - Use a birthday or recovery `--from-height` before the first deposit height to
   avoid missing Orchard notes.
+- `recover inventory` and `recover sweep` can use `--rpc-endpoint` to scan and
+  submit through a node that is not listed in `config.json`.

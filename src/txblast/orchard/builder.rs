@@ -173,6 +173,10 @@ pub(crate) fn orchard_to_transparent_with_change_fee() -> u64 {
     zip317_fee(0, 1, orchard_bundle_actions(1, 1))
 }
 
+pub(crate) fn transparent_to_transparent_fee() -> u64 {
+    zip317_fee(1, 1, 0)
+}
+
 pub(crate) fn orchard_fanout_fee(output_count: usize) -> u64 {
     zip317_fee(0, 0, orchard_bundle_actions(1, output_count))
 }
@@ -668,6 +672,72 @@ pub(crate) async fn build_and_send_orchard_to_transparent_tx(
             &signing_set,
             &[],
             &[keys.sak.clone()],
+            rand_core_10::UnwrapErr(getrandom_04::SysRng),
+            &NoSaplingSpendProver,
+            &NoSaplingOutputProver,
+            &fee_rule,
+        )
+        .map_err(|e| anyhow::anyhow!("transaction build failed: {e}"))?;
+
+    let tx = result.transaction();
+    let mut tx_bytes = Vec::new();
+    tx.write(&mut tx_bytes)
+        .map_err(|e| anyhow::anyhow!("failed to serialize transaction: {e}"))?;
+    client.send_raw_transaction(&hex::encode(&tx_bytes)).await
+}
+
+pub(crate) async fn build_and_send_transparent_to_transparent_tx(
+    network_params: TxblastNetworkParams,
+    client: &ZebraRpcClient,
+    funded_key: &FundedKey,
+    utxo_txid: &str,
+    utxo_output_index: u32,
+    utxo_script: &str,
+    input_value: u64,
+    target_height: u32,
+    recipient: &TransparentAddress,
+    recipient_value: u64,
+) -> Result<String> {
+    let fee = transparent_to_transparent_fee();
+    if input_value != recipient_value.saturating_add(fee) {
+        anyhow::bail!(
+            "planned transparent output {} plus fee {} does not match input value {}",
+            recipient_value,
+            fee,
+            input_value
+        );
+    }
+
+    let build_config = BuildConfig::Standard {
+        sapling_anchor: None,
+        orchard_anchor: None,
+        ironwood_anchor: None,
+        orchard_padding: BundlePadding::DEFAULT,
+        ironwood_padding: BundlePadding::DEFAULT,
+    };
+    let height = BlockHeight::from_u32(target_height);
+    let mut builder = Builder::new(network_params, height, build_config);
+
+    let outpoint = transparent_outpoint(utxo_txid, utxo_output_index)?;
+    let coin = transparent_txout(input_value, utxo_script)?;
+    builder
+        .add_transparent_p2pkh_input(funded_key.public_key, outpoint, coin)
+        .map_err(|e| anyhow::anyhow!("add_transparent_p2pkh_input: {e}"))?;
+
+    let value = Zatoshis::from_u64(recipient_value).context("invalid transparent output amount")?;
+    builder
+        .add_transparent_output(recipient, value)
+        .map_err(|e| anyhow::anyhow!("add_transparent_output: {e}"))?;
+
+    let mut signing_set = TransparentSigningSet::new();
+    signing_set.add_key(funded_key.secret_key);
+
+    let fee_rule = zip317::FeeRule::standard();
+    let result = builder
+        .build(
+            &signing_set,
+            &[],
+            &[],
             rand_core_10::UnwrapErr(getrandom_04::SysRng),
             &NoSaplingSpendProver,
             &NoSaplingOutputProver,

@@ -10,10 +10,11 @@ pub(crate) use builder::{
     BuiltTx, MIN_NOTE_VALUE, ORCHARD_SPEND_FEE, OrchardKeys, ShieldingInput,
     build_and_send_orchard_fanout_tx, build_and_send_orchard_to_transparent_tx,
     build_and_send_orchard_to_transparent_with_change_tx, build_and_send_shielding_tx,
-    build_and_send_shielding_tx_multi, build_lane_advance_tx, decode_txblast_note_role,
-    derive_orchard_keys, min_bootstrap_shield_value, min_lane_value, min_treasury_reseed_value,
-    orchard_fanout_fee, orchard_to_transparent_fee, orchard_to_transparent_with_change_fee,
-    plan_shielding_outputs, shielding_fee, shielding_fee_multi,
+    build_and_send_shielding_tx_multi, build_and_send_transparent_to_transparent_tx,
+    build_lane_advance_tx, decode_txblast_note_role, derive_orchard_keys,
+    min_bootstrap_shield_value, min_lane_value, min_treasury_reseed_value, orchard_fanout_fee,
+    orchard_to_transparent_fee, orchard_to_transparent_with_change_fee, plan_shielding_outputs,
+    shielding_fee, shielding_fee_multi, transparent_to_transparent_fee,
 };
 pub(crate) use planner::{pending_counts, pending_trace_summary, plan_next_work};
 pub(crate) use scanner::{

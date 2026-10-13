@@ -31,9 +31,10 @@ use crate::txblast::orchard::{
     OrchardNullifierIndex, OrchardTree, OrchardTxblastTracer, PlannedOutput, TrackedNote,
     TreasuryInventory, build_and_send_orchard_fanout_tx, build_and_send_orchard_to_transparent_tx,
     build_and_send_orchard_to_transparent_with_change_tx, build_and_send_shielding_tx,
-    derive_orchard_keys, latest_checkpoint_anchor, latest_witness, orchard_fanout_fee,
-    orchard_to_transparent_fee, orchard_to_transparent_with_change_fee, scan_block_range,
-    shielding_fee,
+    build_and_send_transparent_to_transparent_tx, derive_orchard_keys, latest_checkpoint_anchor,
+    latest_witness, orchard_fanout_fee, orchard_to_transparent_fee,
+    orchard_to_transparent_with_change_fee, scan_block_range, shielding_fee,
+    transparent_to_transparent_fee,
 };
 use crate::txblast::rpc::ZebraRpcClient;
 use crate::txblast::transparent::FundedKey;
@@ -145,6 +146,7 @@ pub struct WithdrawArgs {
 pub struct RecoverInventoryArgs {
     pub directory: Option<String>,
     pub from_height: Option<u32>,
+    pub rpc_endpoint: Option<String>,
     pub json: bool,
 }
 
@@ -153,6 +155,7 @@ pub struct RecoverSweepArgs {
     pub directory: Option<String>,
     pub to: String,
     pub from_height: Option<u32>,
+    pub rpc_endpoint: Option<String>,
     pub dry_run: bool,
     pub mainnet_i_understand_recovery: bool,
 }
@@ -1674,14 +1677,40 @@ pub async fn recover_inventory(base_directory: &str, args: RecoverInventoryArgs)
     ensure_wallet_matches_config(&wallet, &recovery, &config)?;
     let from_height = args.from_height.unwrap_or(wallet.birthday_height);
     let orchard_runtime = public_orchard_runtime_for_recovery(&config, &wallet)?;
-    let rpc_endpoint = public_rpc_endpoint(&config)?;
+    let rpc_endpoint = public_rpc_endpoint_with_override(&config, args.rpc_endpoint.as_deref());
     let client = ZebraRpcClient::new(&rpc_endpoint);
+    let current_height = client.get_block_count().await?;
+    let transparent_utxos =
+        confirmed_control_utxos(&client, &recovery.control.address, current_height, 1).await?;
+    let transparent_value_zats = transparent_utxos
+        .iter()
+        .map(|utxo| utxo.satoshis)
+        .sum::<u64>();
 
-    let control_scan =
-        scan_orchard_inventory(&client, &recovery.control, from_height, &orchard_runtime).await?;
+    let control_future = scan_recovery_inventory_record(
+        rpc_endpoint.clone(),
+        recovery.control.clone(),
+        from_height,
+        orchard_runtime.clone(),
+        current_height,
+        None,
+    );
+    let hot_futures = recovery.hot_keys.iter().cloned().map(|hot_key| {
+        scan_recovery_inventory_record(
+            rpc_endpoint.clone(),
+            hot_key,
+            from_height,
+            orchard_runtime.clone(),
+            current_height,
+            None,
+        )
+    });
+    let (control_result, hot_results) =
+        futures::join!(control_future, async { join_all(hot_futures).await });
+    let (_, control_scan) = control_result?;
     let mut hot = Vec::new();
-    for hot_key in &recovery.hot_keys {
-        let scan = scan_orchard_inventory(&client, hot_key, from_height, &orchard_runtime).await?;
+    for result in hot_results {
+        let (hot_key, scan) = result?;
         hot.push(serde_json::json!({
             "key_id": hot_key.key_id,
             "node_name": hot_key.node_name,
@@ -1703,6 +1732,10 @@ pub async fn recover_inventory(base_directory: &str, args: RecoverInventoryArgs)
         "from_height": from_height,
         "control_key": recovery.control.address,
         "rpc_endpoint": rpc_endpoint,
+        "transparent_control": {
+            "utxo_count": transparent_utxos.len(),
+            "value_zats": transparent_value_zats,
+        },
         "control": {
             "note_count": control_scan.registry.spendable_note_count(),
             "value_zats": control_scan.registry.spendable_value(),
@@ -1710,7 +1743,7 @@ pub async fn recover_inventory(base_directory: &str, args: RecoverInventoryArgs)
         },
         "hot": hot,
         "total_note_count": control_scan.registry.spendable_note_count() as u64 + hot_note_count,
-        "total_value_zats": control_scan.registry.spendable_value() + hot_value,
+        "total_value_zats": control_scan.registry.spendable_value() + hot_value + transparent_value_zats,
     });
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -1719,6 +1752,11 @@ pub async fn recover_inventory(base_directory: &str, args: RecoverInventoryArgs)
         println!("from height: {from_height}");
         println!("control key: {}", recovery.control.address);
         println!("hot keys: {}", recovery.hot_keys.len());
+        println!(
+            "transparent control UTXOs: {} ({} zats)",
+            transparent_utxos.len(),
+            transparent_value_zats
+        );
         println!(
             "recoverable inventory: {} notes, {} zats",
             report["total_note_count"], report["total_value_zats"]
@@ -1740,7 +1778,7 @@ pub async fn recover_sweep(base_directory: &str, args: RecoverSweepArgs) -> Resu
     }
     let from_height = args.from_height.unwrap_or(wallet.birthday_height);
     let orchard_runtime = public_orchard_runtime_for_recovery(&config, &wallet)?;
-    let rpc_endpoint = public_rpc_endpoint(&config)?;
+    let rpc_endpoint = public_rpc_endpoint_with_override(&config, args.rpc_endpoint.as_deref());
     let client = ZebraRpcClient::new(&rpc_endpoint);
     let mut state = load_public_state(&dir, wallet.network)?;
     refresh_pending_transactions(&client, &mut state).await?;
@@ -1750,34 +1788,89 @@ pub async fn recover_sweep(base_directory: &str, args: RecoverSweepArgs) -> Resu
             state.pending_transactions.len()
         );
     }
+    let current_height = client.get_block_count().await?;
+    let transparent_utxos =
+        confirmed_control_utxos(&client, &recovery.control.address, current_height, 1).await?;
+    let transparent_spendable: u64 = transparent_utxos
+        .iter()
+        .filter_map(|utxo| utxo.satoshis.checked_sub(transparent_to_transparent_fee()))
+        .sum();
 
-    let mut inventories = Vec::new();
-    inventories.push((
-        &recovery.control,
-        scan_orchard_inventory(&client, &recovery.control, from_height, &orchard_runtime).await?,
-    ));
-    for hot_key in &recovery.hot_keys {
-        inventories.push((
+    let control_future = scan_recovery_inventory_record(
+        rpc_endpoint.clone(),
+        recovery.control.clone(),
+        from_height,
+        orchard_runtime.clone(),
+        current_height,
+        None,
+    );
+    let hot_futures = recovery.hot_keys.iter().cloned().map(|hot_key| {
+        scan_recovery_inventory_record(
+            rpc_endpoint.clone(),
             hot_key,
-            scan_orchard_inventory(&client, hot_key, from_height, &orchard_runtime).await?,
-        ));
+            from_height,
+            orchard_runtime.clone(),
+            current_height,
+            None,
+        )
+    });
+    let (control_result, hot_results) =
+        futures::join!(control_future, async { join_all(hot_futures).await });
+    let mut owned_inventories = Vec::new();
+    owned_inventories.push(control_result?);
+    for result in hot_results {
+        owned_inventories.push(result?);
     }
+    let inventories = owned_inventories
+        .iter()
+        .map(|(record, scan)| (record, scan))
+        .collect::<Vec<_>>();
     let total_spendable: u64 = inventories
         .iter()
         .map(|(_, scan)| scan.registry.spendable_value())
         .sum();
     if args.dry_run {
         println!(
-            "dry run: would scan from height {} and sweep up to {} recoverable zats to {}",
-            from_height, total_spendable, args.to
+            "dry run: would scan from height {} and sweep up to {} shielded zats plus {} transparent zats to {}",
+            from_height, total_spendable, transparent_spendable, args.to
         );
         return Ok(());
     }
-    if total_spendable == 0 {
-        anyhow::bail!("no recoverable shielded txblast inventory found");
+    if total_spendable == 0 && transparent_spendable == 0 {
+        anyhow::bail!("no recoverable txblast inventory found");
     }
     let recipient = transparent_address_for_encoded(&args.to)?;
     let mut submitted = Vec::new();
+    if transparent_spendable > 0 {
+        let control_key = funded_key_from_secret(&recovery.control)?;
+        for utxo in transparent_utxos {
+            let Some(output) = utxo.satoshis.checked_sub(transparent_to_transparent_fee()) else {
+                continue;
+            };
+            if output == 0 {
+                continue;
+            }
+            let target_height = client
+                .get_block_count()
+                .await?
+                .saturating_add(TARGET_HEIGHT_OFFSET_BLOCKS);
+            let txid = build_and_send_transparent_to_transparent_tx(
+                TxblastNetworkParams::from_network_kind(wallet.network),
+                &client,
+                &control_key,
+                &utxo.txid,
+                utxo.output_index,
+                &utxo.script,
+                utxo.satoshis,
+                target_height,
+                &recipient,
+                output,
+            )
+            .await?;
+            record_submitted_tx(&mut state, txid.clone(), DurableTxKind::RecoverySweep, None);
+            submitted.push(txid);
+        }
+    }
     for (record, scan) in inventories {
         let Some(checkpoint) = scan.checkpoint.as_ref() else {
             continue;
@@ -2305,6 +2398,27 @@ async fn scan_orchard_inventory(
     .await
 }
 
+async fn scan_recovery_inventory_record(
+    rpc_endpoint: String,
+    record: SecretKeyRecord,
+    from_height: u32,
+    orchard_cfg: OrchardBlastRuntimeConfig,
+    best_height: u32,
+    best_hash: Option<String>,
+) -> Result<(SecretKeyRecord, ScannedInventory)> {
+    let client = ZebraRpcClient::new(&rpc_endpoint);
+    let scan = scan_orchard_inventory_to_tip(
+        &client,
+        &record,
+        from_height,
+        &orchard_cfg,
+        best_height,
+        best_hash,
+    )
+    .await?;
+    Ok((record, scan))
+}
+
 async fn scan_orchard_inventory_to_tip(
     client: &ZebraRpcClient,
     record: &SecretKeyRecord,
@@ -2555,6 +2669,13 @@ fn public_rpc_endpoint(config: &Config) -> Result<String> {
         instance.public_ip,
         config.rpc_port()
     ))
+}
+
+fn public_rpc_endpoint_with_override(config: &Config, rpc_endpoint: Option<&str>) -> String {
+    rpc_endpoint.map(ToOwned::to_owned).unwrap_or_else(|| {
+        public_rpc_endpoint(config)
+            .unwrap_or_else(|_| format!("http://localhost:{}", config.rpc_port()))
+    })
 }
 
 fn parse_withdraw_amount(value: &str) -> Result<WithdrawalAmount> {
