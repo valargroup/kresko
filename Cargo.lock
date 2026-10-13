@@ -2528,7 +2528,7 @@ dependencies = [
  "zakura-address",
  "zakura-bls12-381",
  "zakura-chain",
- "zakura-equihash 2.2.0",
+ "zakura-equihash 2.2.0 (git+https://github.com/zakura-core/common.git?rev=513fe55339764bfbcf934765b382c5320abdef93)",
  "zakura-jsonl-trace",
  "zakura-jubjub",
  "zakura-orchard",
@@ -5394,6 +5394,7 @@ checksum = "66fee0b777b0f5ac1c69bb06d361268faafa61cd4682ae064a171c16c433e9e4"
 [[package]]
 name = "zakura"
 version = "1.6.1"
+source = "git+https://github.com/zakura-core/zakura.git?rev=24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10#24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10"
 dependencies = [
  "abscissa_core",
  "bytes",
@@ -5502,6 +5503,7 @@ dependencies = [
 [[package]]
 name = "zakura-chain"
 version = "10.0.0"
+source = "git+https://github.com/zakura-core/zakura.git?rev=24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10#24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10"
 dependencies = [
  "bech32",
  "bitflags",
@@ -5538,7 +5540,7 @@ dependencies = [
  "windows-sys 0.61.2",
  "x25519-dalek",
  "zakura-address",
- "zakura-equihash 2.2.0",
+ "zakura-equihash 2.2.0 (git+https://github.com/zakura-core/common.git?rev=513fe55339764bfbcf934765b382c5320abdef93)",
  "zakura-halo2-proofs",
  "zakura-jubjub",
  "zakura-orchard",
@@ -5557,6 +5559,7 @@ dependencies = [
 [[package]]
 name = "zakura-consensus"
 version = "11.0.0"
+source = "git+https://github.com/zakura-core/zakura.git?rev=24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10#24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10"
 dependencies = [
  "blake2b_simd",
  "chrono",
@@ -5597,21 +5600,22 @@ dependencies = [
 [[package]]
 name = "zakura-equihash"
 version = "2.2.0"
-dependencies = [
- "blake2b_simd",
- "corez",
- "libc",
-]
-
-[[package]]
-name = "zakura-equihash"
-version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "401de5c53351fd8d45efba3e797f5ca6eca00d03e1a6dc19adb44b50d786cfb7"
 dependencies = [
  "blake2b_simd",
  "corez",
  "document-features",
+]
+
+[[package]]
+name = "zakura-equihash"
+version = "2.2.0"
+source = "git+https://github.com/zakura-core/common.git?rev=513fe55339764bfbcf934765b382c5320abdef93#513fe55339764bfbcf934765b382c5320abdef93"
+dependencies = [
+ "blake2b_simd",
+ "corez",
+ "libc",
 ]
 
 [[package]]
@@ -5668,6 +5672,7 @@ dependencies = [
 [[package]]
 name = "zakura-header-chain"
 version = "4.1.0"
+source = "git+https://github.com/zakura-core/zakura.git?rev=24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10#24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10"
 dependencies = [
  "chrono",
  "rayon",
@@ -5679,6 +5684,7 @@ dependencies = [
 [[package]]
 name = "zakura-jsonl-trace"
 version = "1.2.0"
+source = "git+https://github.com/zakura-core/zakura.git?rev=24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10#24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10"
 dependencies = [
  "chrono",
  "metrics",
@@ -5731,6 +5737,7 @@ dependencies = [
 [[package]]
 name = "zakura-network"
 version = "10.0.0"
+source = "git+https://github.com/zakura-core/zakura.git?rev=24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10#24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10"
 dependencies = [
  "bitflags",
  "blake2b_simd",
@@ -5766,6 +5773,7 @@ dependencies = [
 [[package]]
 name = "zakura-node-services"
 version = "5.0.0"
+source = "git+https://github.com/zakura-core/zakura.git?rev=24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10#24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10"
 dependencies = [
  "jsonrpsee-types",
  "reqwest 0.13.3",
@@ -5909,6 +5917,7 @@ dependencies = [
 [[package]]
 name = "zakura-quic"
 version = "0.1.0"
+source = "git+https://github.com/zakura-core/zakura.git?rev=24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10#24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10"
 dependencies = [
  "bytes",
  "curve25519-dalek",
@@ -5963,6 +5972,7 @@ dependencies = [
 [[package]]
 name = "zakura-rpc"
 version = "13.0.0"
+source = "git+https://github.com/zakura-core/zakura.git?rev=24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10#24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10"
 dependencies = [
  "base64",
  "chrono",
@@ -6056,6 +6066,7 @@ dependencies = [
 [[package]]
 name = "zakura-script"
 version = "4.0.1"
+source = "git+https://github.com/zakura-core/zakura.git?rev=24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10#24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10"
 dependencies = [
  "libzcash_script",
  "rand 0.8.5",
@@ -6080,6 +6091,7 @@ dependencies = [
 [[package]]
 name = "zakura-state"
 version = "11.0.0"
+source = "git+https://github.com/zakura-core/zakura.git?rev=24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10#24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10"
 dependencies = [
  "bincode",
  "chrono",
@@ -6114,6 +6126,7 @@ dependencies = [
 [[package]]
 name = "zakura-tower-batch-control"
 version = "1.3.0"
+source = "git+https://github.com/zakura-core/zakura.git?rev=24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10#24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10"
 dependencies = [
  "futures",
  "futures-core",
@@ -6128,6 +6141,7 @@ dependencies = [
 [[package]]
 name = "zakura-tower-fallback"
 version = "1.2.0"
+source = "git+https://github.com/zakura-core/zakura.git?rev=24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10#24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10"
 dependencies = [
  "futures-core",
  "pin-project",
@@ -6163,6 +6177,7 @@ dependencies = [
 [[package]]
 name = "zakura_mmr_tree"
 version = "1.0.0"
+source = "git+https://github.com/zakura-core/zakura.git?rev=24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10#24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10"
 dependencies = [
  "blake2b_simd",
  "byteorder",

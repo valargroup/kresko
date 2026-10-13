@@ -323,3 +323,19 @@ uv run kresko-fleet status "ci-$GIT_SHA" --json > result.json
 ## License
 
 No license file is currently included in this repository.
+
+## Standalone Rust builds
+
+The Rust toolchain file selects Rust 1.97.1. `Cargo.toml` and `Cargo.lock` pin
+Zakura and Common to published Git revisions. Cargo fetches both repositories;
+you do not need sibling checkouts. Run `cargo build --locked --release`.
+
+To collect heights from a lower bound, use the Python fleet command:
+
+```bash
+kresko-fleet heights <fleet> --start-height 2000000
+```
+
+Public txblast recovery accepts `--rpc-endpoint` for a synced node outside the
+fleet. Recovery sweep includes transparent deposits left on the control address.
+See [public txblast](docs/public-txblast.md) for the recovery commands.

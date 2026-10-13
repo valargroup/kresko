@@ -2,6 +2,7 @@
 name = "kresko"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.97"
 
 [dependencies]
 anyhow = "1"
@@ -10,7 +11,7 @@ aws-sdk-s3 = "1"
 aws-smithy-types = "1"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
-cpu-equihash-solver = { package = "zakura-equihash", path = "../../valar/common.iroh-free-smoke/crates/equihash", features = ["solver"] }
+cpu-equihash-solver = { package = "zakura-equihash", git = "https://github.com/zakura-core/common.git", rev = "513fe55339764bfbcf934765b382c5320abdef93", features = ["solver"] }
 dotenvy = "0.15"
 futures = "0.3"
 rand = "0.9"
@@ -25,16 +26,16 @@ secp256k1 = "0.29"
 tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 chrono = { version = "0.4", default-features = false }
-# Zakura crates, pinned to a tagged release so Cargo fetches them directly (no
+# Zakura crates, pinned to a published revision so Cargo fetches them directly (no
 # sibling checkout needed). Cargo.lock pins the exact commit. For local Zakura
 # co-development, see .cargo/config.toml.example.
 #
 # Kept under the `zebra_*` extern names via `package =` so the existing
 # `zebra_chain::...` paths throughout this crate keep compiling; Zakura is the
 # continuation of these crates under a new name.
-zebra-chain = { package = "zakura-chain", path = "../../valar/zakura.iroh-free-smoke/crates/zakura-chain", features = ["internal-miner"] }
-zebrad = { package = "zakura", path = "../../valar/zakura.iroh-free-smoke/crates/zakurad" }
-zebra-jsonl-trace = { package = "zakura-jsonl-trace", path = "../../valar/zakura.iroh-free-smoke/crates/zakura-jsonl-trace" }
+zebra-chain = { package = "zakura-chain", git = "https://github.com/zakura-core/zakura.git", rev = "24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10", features = ["internal-miner"] }
+zebrad = { package = "zakura", git = "https://github.com/zakura-core/zakura.git", rev = "24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10" }
+zebra-jsonl-trace = { package = "zakura-jsonl-trace", git = "https://github.com/zakura-core/zakura.git", rev = "24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10" }
 # The Common stack zakura uses (zakura#1093), so the transaction builder signs
 # with the NU7 consensus branch id the node enforces.
 zcash_primitives = { package = "zakura-primitives", features = ["transparent-inputs"], version = "=2.2.0" }
@@ -58,3 +59,7 @@ rand_core_06 = { package = "rand_core", version = "0.6" }
 rand_core_10 = { package = "rand_core", version = "0.10" }
 getrandom_04 = { package = "getrandom", version = "0.4", features = ["sys_rng"] }
 
+# Zakura's experiment revision uses a sibling Common checkout. Resolve that
+# dependency from the published Common revision for standalone builds.
+[patch."https://github.com/zakura-core/zakura.git"]
+zakura-equihash = { git = "https://github.com/zakura-core/common.git", rev = "513fe55339764bfbcf934765b382c5320abdef93" }

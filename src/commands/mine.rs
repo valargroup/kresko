@@ -325,11 +325,15 @@ pub async fn run_with(
 
         let mut header = block.header;
         header.nonce = HexDebug(work_nonce(nonce_prefix, runs));
-        writeln!(&mut log_file, "{}", serde_json::json!({
-            "ts_unix_ms": now_unix_ms(), "event": "nonce_work",
-            "height": template_height, "nonce_start": hex::encode(*header.nonce),
-            "work_id": block.work_id, "template_prev_hash": template_summary.previous_block_hash,
-        }))?;
+        writeln!(
+            &mut log_file,
+            "{}",
+            serde_json::json!({
+                "ts_unix_ms": now_unix_ms(), "event": "nonce_work",
+                "height": template_height, "nonce_start": hex::encode(*header.nonce),
+                "work_id": block.work_id, "template_prev_hash": template_summary.previous_block_hash,
+            })
+        )?;
         log_file.flush()?;
 
         // 3. Keep long-polling until work becomes invalid or the freshness
