@@ -14,6 +14,17 @@ set -Eeuo pipefail
 # Optional: --backend-port 20001 --remote-root /root/zcash-explorer
 #           --service explorer-testnet --email you@example.com --key ~/.ssh/id_ed25519
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Caddy release pin. The 2026 advisory cluster (CVE-2026-77281 handler and
+# placeholder re-expansion, CVE-2026-92284 unbounded body DoS, CVE-2026-92700
+# admin auth bypass, CVE-2026-52845 FastCGI header bypass) is fixed only in
+# 2.11.4; 2.11.6 carried breaking security hardening and 2.11.7 fixes its
+# regressions, so 2.11.7 is the pin and 2.11.4 the floor asserted below before
+# any Caddyfile is installed or reloaded.
+CADDY_APT_VERSION="${CADDY_APT_VERSION:-2.11.7}"
+CADDY_MIN_VERSION="${CADDY_MIN_VERSION:-2.11.4}"
+
 HOST=""
 DOMAIN=""
 BACKEND_PORT=20001
@@ -22,7 +33,7 @@ SERVICE=explorer-testnet
 EMAIL=""
 SSH_KEY="${KRESKO_SSH_KEY_PATH:-$HOME/.ssh/id_ed25519}"
 
-usage() { sed -n '3,18p' "$0"; }
+usage() { sed -n '4,15p' "$0"; }
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -55,17 +66,27 @@ else
     echo "         Caddy's Let's Encrypt challenge needs ${DOMAIN} -> ${HOST}. Continuing anyway." >&2
 fi
 
-# 1. Install Caddy from its official apt repo.
-echo "=== installing Caddy on ${HOST} ==="
+# 1. Install Caddy from its official apt repo, pinned to a known-good release.
+echo "=== installing Caddy ${CADDY_APT_VERSION} on ${HOST} ==="
 ssh_run "set -e
 export DEBIAN_FRONTEND=noninteractive
 if ! command -v caddy >/dev/null 2>&1; then
   apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
-  apt-get update && apt-get install -y caddy
+  apt-get update
+  apt-get install -y 'caddy=${CADDY_APT_VERSION}'
 fi
 caddy version"
+
+# 1b. Refuse to write a Caddyfile onto a Caddy older than the security floor:
+#     the apt pin above is skipped when a Caddy is already installed, so the
+#     running version must be asserted, not assumed.
+echo "=== verifying Caddy is at least ${CADDY_MIN_VERSION} on ${HOST} ==="
+{
+    printf 'export REQUIRED_CADDY_VERSION=%q\n' "$CADDY_MIN_VERSION"
+    cat "$SCRIPT_DIR/verify-caddy-version.sh"
+} | ssh "${SSH_OPTS[@]}" "root@${HOST}" "bash -s"
 
 # 2. Open 80/443 if a firewall is active (don't enable one if it isn't).
 echo "=== ensuring ports 80/443 reachable ==="
