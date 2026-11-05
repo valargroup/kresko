@@ -721,7 +721,8 @@ async fn supervise_template_updates(
 
         match summary.submit_old {
             Some(true) => {
-                let replaces_provisional = current_is_provisional && summary.transactions > 0;
+                let replaces_provisional = (current_is_provisional || current.transactions == 0)
+                    && summary.transactions > 0;
                 let refresh_due = refresh_policy
                     .interval
                     .is_some_and(|interval| started.elapsed() >= interval);
@@ -745,7 +746,7 @@ async fn supervise_template_updates(
 
                 longpollid = summary.longpollid.clone();
 
-                if replacement_reason.is_none() && (replaces_provisional || refresh_due) {
+                if replaces_provisional || (replacement_reason.is_none() && refresh_due) {
                     replacement_reason = Some(if replaces_provisional {
                         "provisional_replaced"
                     } else {
@@ -765,6 +766,12 @@ async fn supervise_template_updates(
                             cancel_requested_at,
                         },
                     );
+                    if replaces_provisional {
+                        // A full template makes the empty pass obsolete. Stop at the next
+                        // digit boundary so a finishing empty solution cannot be submitted.
+                        action_tx.send_replace(SolverAction::StopNow);
+                        return;
+                    }
                     action_tx.send_replace(SolverAction::StopAtNonceBoundary);
                     current_is_provisional = false;
                 }
@@ -1415,6 +1422,7 @@ mod tests {
     /// block the node was asked to accept.
     async fn mine_through_template_change(
         name: &str,
+        initial_transactions: usize,
         next: Template,
         submit_stale_solutions: bool,
     ) -> Vec<String> {
@@ -1422,7 +1430,7 @@ mod tests {
             height: 101,
             prev_hash: TIP0.to_string(),
             longpollid: "A".to_string(),
-            transactions: 0,
+            transactions: initial_transactions,
             submit_old: Some(true),
         });
         let endpoint = serve(node.clone()).await;
@@ -1468,7 +1476,10 @@ mod tests {
         let second = block_from_template(&template).expect("valid template");
         assert_ne!(first.header.nonce, second.header.nonce);
         assert_eq!(first.transactions, second.transactions);
-        assert_eq!(first.header.previous_block_hash, second.header.previous_block_hash);
+        assert_eq!(
+            first.header.previous_block_hash,
+            second.header.previous_block_hash
+        );
     }
 
     async fn finish_supervisor(
@@ -1510,7 +1521,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn supervisor_rearms_after_valid_mempool_work() {
-        let initial = template(101, TIP0, "A");
+        let initial = Template {
+            transactions: 1,
+            ..template(101, TIP0, "A")
+        };
         let node = MockNode::new(initial.clone());
         let endpoint = serve(node.clone()).await;
         let (action_tx, action_rx) = watch::channel(SolverAction::Continue);
@@ -1675,7 +1689,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn freshness_interval_refreshes_on_the_next_valid_update() {
-        let initial = template(101, TIP0, "A");
+        let initial = Template {
+            transactions: 1,
+            ..template(101, TIP0, "A")
+        };
         let node = MockNode::new(initial.clone());
         let endpoint = serve(node.clone()).await;
         let (action_tx, mut action_rx) = watch::channel(SolverAction::Continue);
@@ -1707,7 +1724,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn full_template_replaces_provisional_work_at_a_nonce_boundary() {
+    async fn full_template_replaces_provisional_work_at_a_digit_boundary() {
         let initial = template(101, TIP0, "A");
         let node = MockNode::new(initial.clone());
         let endpoint = serve(node.clone()).await;
@@ -1733,8 +1750,8 @@ mod tests {
             submit_old: Some(true),
             ..initial
         });
-        wait_for_action(&mut action_rx, SolverAction::StopAtNonceBoundary).await;
-        let update = finish_supervisor(supervisor, update, SolverAction::StopAtNonceBoundary).await;
+        wait_for_action(&mut action_rx, SolverAction::StopNow).await;
+        let update = finish_supervisor(supervisor, update, SolverAction::StopNow).await;
 
         assert_eq!(update.reason, "provisional_replaced");
         assert_eq!(update.summary.transactions, 3);
@@ -1742,7 +1759,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn tip_change_upgrades_a_pending_nonce_boundary_stop() {
-        let initial = template(101, TIP0, "A");
+        let initial = Template {
+            transactions: 1,
+            ..template(101, TIP0, "A")
+        };
         let node = MockNode::new(initial.clone());
         let endpoint = serve(node.clone()).await;
         let (action_tx, mut action_rx) = watch::channel(SolverAction::Continue);
@@ -1753,10 +1773,10 @@ mod tests {
             summarize_template(&initial.to_json(false)),
             action_tx,
             TemplateRefreshPolicy {
-                interval: None,
+                interval: Some(Duration::ZERO),
                 mine_provisional_empty_templates: true,
             },
-            true,
+            false,
             update.clone(),
         ));
 
@@ -1818,6 +1838,7 @@ mod tests {
         }
         let submitted = mine_through_template_change(
             "stale-discarded",
+            0,
             Template {
                 height: 102,
                 prev_hash: TIP1.to_string(),
@@ -1859,6 +1880,7 @@ mod tests {
         }
         let submitted = mine_through_template_change(
             "stale-submitted",
+            0,
             Template {
                 height: 102,
                 prev_hash: TIP1.to_string(),
@@ -1898,12 +1920,32 @@ mod tests {
         assert_eq!(submitted_row["cancel_action"], "stop_now");
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_finishing_empty_solution_is_discarded_when_full_work_arrives() {
+        let submitted = mine_through_template_change(
+            "empty-replaced",
+            0,
+            Template {
+                transactions: 3,
+                longpollid: "full".into(),
+                ..template(101, TIP0, "A")
+            },
+            false,
+        )
+        .await;
+        assert!(
+            submitted.is_empty(),
+            "empty work must not be submitted after full work arrives"
+        );
+    }
+
     /// A mempool change cancels the solver too, but it does not invalidate the
     /// height being mined, so the solution must still be published.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_solution_found_after_a_mempool_change_is_published() {
         let submitted = mine_through_template_change(
             "mempool-changed",
+            1,
             Template {
                 height: 101,
                 prev_hash: TIP0.to_string(),
