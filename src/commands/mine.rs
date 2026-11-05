@@ -1136,7 +1136,7 @@ fn block_from_template(template: &serde_json::Value) -> Result<RawTemplateBlock>
         commitment_bytes: HexDebug(commitment_bytes),
         time,
         difficulty_threshold,
-        nonce: HexDebug([0; 32]),
+        nonce: HexDebug(rand::random()),
         solution: Solution::for_proposal(),
     };
 
@@ -1459,6 +1459,16 @@ mod tests {
 
     fn template_update_slot() -> Arc<Mutex<Option<TemplateUpdate>>> {
         Arc::new(Mutex::new(None))
+    }
+
+    #[test]
+    fn repeated_templates_start_distinct_nonce_streams() {
+        let template = template(101, TIP0, "A").to_json(false);
+        let first = block_from_template(&template).expect("valid template");
+        let second = block_from_template(&template).expect("valid template");
+        assert_ne!(first.header.nonce, second.header.nonce);
+        assert_eq!(first.transactions, second.transactions);
+        assert_eq!(first.header.previous_block_hash, second.header.previous_block_hash);
     }
 
     async fn finish_supervisor(
