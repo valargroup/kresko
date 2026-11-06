@@ -1201,7 +1201,7 @@ pub async fn prepare(base_directory: &str, args: GuardedLifecycleArgs) -> Result
         return Ok(());
     }
 
-    let control_scan = match control_scan_result.scan.take() {
+    let mut control_scan = match control_scan_result.scan.take() {
         Some(scan) => scan,
         None => {
             println!(
@@ -1242,7 +1242,7 @@ pub async fn prepare(base_directory: &str, args: GuardedLifecycleArgs) -> Result
             .as_ref()
             .context("control Orchard inventory has no checkpoint for reservoir split witnesses")?;
         println!("fetching witness anchor for control reservoir split...");
-        let anchor = latest_checkpoint_anchor(&control_scan.tree, checkpoint)?;
+        let anchor = latest_checkpoint_anchor(&mut control_scan.tree, checkpoint)?;
         let target_height = current_height.saturating_add(TARGET_HEIGHT_OFFSET_BLOCKS);
         let control_address = control_orchard_keys.address();
         let mut submitted = Vec::new();
@@ -1254,7 +1254,7 @@ pub async fn prepare(base_directory: &str, args: GuardedLifecycleArgs) -> Result
                 split_batch_count,
                 batch.outputs.len()
             );
-            let witness = latest_witness(&control_scan.tree, &batch.source_note, checkpoint)?;
+            let witness = latest_witness(&mut control_scan.tree, &batch.source_note, checkpoint)?;
             let recipients = batch
                 .outputs
                 .into_iter()
@@ -1316,7 +1316,7 @@ pub async fn prepare(base_directory: &str, args: GuardedLifecycleArgs) -> Result
         .as_ref()
         .context("control Orchard inventory has no checkpoint for fanout witnesses")?;
     println!("fetching witness anchor for shielded fanout...");
-    let anchor = latest_checkpoint_anchor(&control_scan.tree, checkpoint)?;
+    let anchor = latest_checkpoint_anchor(&mut control_scan.tree, checkpoint)?;
     let target_height = current_height.saturating_add(TARGET_HEIGHT_OFFSET_BLOCKS);
     let mut submitted = Vec::new();
     let fanout_batch_count = fanout_batches.len();
@@ -1327,7 +1327,7 @@ pub async fn prepare(base_directory: &str, args: GuardedLifecycleArgs) -> Result
             fanout_batch_count,
             batch.recipients.len()
         );
-        let witness = latest_witness(&control_scan.tree, &batch.source_note, checkpoint)?;
+        let witness = latest_witness(&mut control_scan.tree, &batch.source_note, checkpoint)?;
         let txid = build_and_send_orchard_fanout_tx(
             TxblastNetworkParams::from_network_kind(wallet.network),
             &client,
@@ -1615,18 +1615,18 @@ pub async fn withdraw(base_directory: &str, args: WithdrawArgs) -> Result<()> {
             .get(planned.candidate_index)
             .context("withdrawal planner returned an invalid candidate index")?;
         let (record, scan) = inventories
-            .get(candidate.inventory_index)
+            .get_mut(candidate.inventory_index)
             .context("withdrawal planner returned an invalid inventory index")?;
         let Some(checkpoint) = scan.checkpoint.as_ref() else {
             anyhow::bail!("planned withdrawal note has no Orchard checkpoint");
         };
-        let anchor = latest_checkpoint_anchor(&scan.tree, checkpoint)?;
+        let anchor = latest_checkpoint_anchor(&mut scan.tree, checkpoint)?;
         let keys = derive_orchard_keys(&secret_bytes(record)?)?;
         let target_height = client
             .get_block_count()
             .await?
             .saturating_add(TARGET_HEIGHT_OFFSET_BLOCKS);
-        let witness = latest_witness(&scan.tree, &candidate.note, checkpoint)?;
+        let witness = latest_witness(&mut scan.tree, &candidate.note, checkpoint)?;
         let txid = if planned.with_change {
             build_and_send_orchard_to_transparent_with_change_tx(
                 TxblastNetworkParams::from_network_kind(wallet.network),
@@ -1871,18 +1871,18 @@ pub async fn recover_sweep(base_directory: &str, args: RecoverSweepArgs) -> Resu
             submitted.push(txid);
         }
     }
-    for (record, scan) in inventories {
+    for (record, scan) in owned_inventories.iter_mut() {
         let Some(checkpoint) = scan.checkpoint.as_ref() else {
             continue;
         };
-        let anchor = latest_checkpoint_anchor(&scan.tree, checkpoint)?;
+        let anchor = latest_checkpoint_anchor(&mut scan.tree, checkpoint)?;
         let keys = derive_orchard_keys(&secret_bytes(record)?)?;
         for note in scan.registry.spendable_notes() {
             let output = note.value().saturating_sub(orchard_to_transparent_fee(1));
             if output == 0 {
                 continue;
             }
-            let witness = latest_witness(&scan.tree, &note, checkpoint)?;
+            let witness = latest_witness(&mut scan.tree, &note, checkpoint)?;
             let target_height = client
                 .get_block_count()
                 .await?
