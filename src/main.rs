@@ -411,6 +411,9 @@ enum Commands {
         csv: String,
     },
 
+    /// Generate transparent self-spends on a private experiment chain.
+    TxblastTransparentLocal(txblast::transparent_runtime::Options),
+
     /// Run txblast locally (intended to run on remote nodes)
     TxblastLocal {
         /// RPC endpoint
@@ -921,6 +924,7 @@ impl Commands {
             | Commands::PowBench { .. }
             | Commands::PowSimulateMatrix { .. }
             | Commands::TxblastLocal { .. }
+            | Commands::TxblastTransparentLocal(..)
             | Commands::FundRuntimeKeysLocal { .. }
             | Commands::SeedLocal { .. }
             | Commands::TxblastStatusLocal { .. } => None,
@@ -1493,6 +1497,9 @@ async fn main() -> Result<()> {
                 csv_path: csv,
             };
             pow_sim::run_matrix(cli)?;
+        }
+        Commands::TxblastTransparentLocal(options) => {
+            txblast::transparent_runtime::run(options).await?;
         }
         Commands::TxblastLocal {
             rpc_endpoint,
