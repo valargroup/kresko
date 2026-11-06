@@ -385,8 +385,8 @@ async fn fund_runtime_keys_local(
                 height: shield_height,
                 hash: String::new(),
             });
-    let funding_anchor = latest_checkpoint_anchor(&tree, &checkpoint)?;
-    let funding_witness = latest_witness(&tree, &funding_note, &checkpoint)?;
+    let funding_anchor = latest_checkpoint_anchor(&mut tree, &checkpoint)?;
+    let funding_witness = latest_witness(&mut tree, &funding_note, &checkpoint)?;
 
     let recipient_count = runtime_keys.len();
     let distributable = funding_note

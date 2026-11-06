@@ -21,7 +21,7 @@ use super::{
     TreasuryInventory, decode_txblast_note_role, pending_counts, pending_trace_summary,
 };
 
-pub(crate) type OrchardTree = ShardTree<MemoryShardStore<MerkleHashOrchard, u32>, 32, 16>;
+pub(crate) type OrchardTree = ShardTree<MemoryShardStore<MerkleHashOrchard, u32>, 32, 8>;
 pub(crate) type OrchardNullifierIndex = HashMap<[u8; 32], String>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -274,23 +274,23 @@ fn frontier_matches_root(
 }
 
 pub(crate) fn latest_checkpoint_anchor(
-    tree: &OrchardTree,
+    tree: &mut OrchardTree,
     checkpoint: &BlockRef,
 ) -> Result<orchard::Anchor> {
     let root = tree
-        .root_at_checkpoint_id(&checkpoint.height)
+        .root_at_checkpoint_id_caching(&checkpoint.height)
         .map_err(|e| anyhow::anyhow!("root_at_checkpoint_id: {e:?}"))?
         .ok_or_else(|| anyhow::anyhow!("no root at checkpoint {}", checkpoint.height))?;
     Ok(orchard::Anchor::from(root))
 }
 
 pub(crate) fn latest_witness(
-    tree: &OrchardTree,
+    tree: &mut OrchardTree,
     tracked: &TrackedNote,
     checkpoint: &BlockRef,
 ) -> Result<orchard::tree::MerklePath> {
     let witness = tree
-        .witness_at_checkpoint_id(tracked.position, &checkpoint.height)
+        .witness_at_checkpoint_id_caching(tracked.position, &checkpoint.height)
         .map_err(|e| anyhow::anyhow!("witness_at_checkpoint_id: {e:?}"))?
         .ok_or_else(|| {
             anyhow::anyhow!(
@@ -526,4 +526,117 @@ async fn scan_block(
 
 fn duration_ms_u64(duration_ms: u128) -> u64 {
     duration_ms.min(u128::from(u64::MAX)) as u64
+}
+
+#[cfg(test)]
+mod caching_tests {
+    use super::*;
+    use incrementalmerkletree::{Hashable, Level};
+
+    /// The previous shard height, queried without caching, as the expected result.
+    type ReferenceTree = ShardTree<MemoryShardStore<MerkleHashOrchard, u32>, 32, 16>;
+
+    const LEAVES_PER_BLOCK: u64 = 330;
+
+    fn leaf(seed: u64) -> MerkleHashOrchard {
+        let base = MerkleHashOrchard::empty_leaf();
+        (0..=seed % 7).fold(
+            MerkleHashOrchard::combine(Level::from((seed % 16) as u8), &base, &base),
+            |hash, _| MerkleHashOrchard::combine(Level::from(0), &hash, &base),
+        )
+    }
+
+    fn block_retention(leaf_index: u64, height: u32) -> Retention<u32> {
+        let marked = leaf_index % 41 == 0;
+        match (
+            marked,
+            leaf_index % LEAVES_PER_BLOCK == LEAVES_PER_BLOCK - 1,
+        ) {
+            (true, true) => Retention::Checkpoint {
+                id: height,
+                marking: Marking::Marked,
+            },
+            (false, true) => Retention::Checkpoint {
+                id: height,
+                marking: Marking::None,
+            },
+            (true, false) => Retention::Marked,
+            (false, false) => Retention::Ephemeral,
+        }
+    }
+
+    macro_rules! append_blocks {
+        ($tree:expr, $seed:expr, $start_leaf:expr, $blocks:expr, $first_height:expr) => {{
+            for block in 0..$blocks {
+                let height = $first_height + block as u32;
+                for offset in 0..LEAVES_PER_BLOCK {
+                    let index = $start_leaf + block as u64 * LEAVES_PER_BLOCK + offset;
+                    $tree
+                        .append(leaf(index ^ $seed), block_retention(index, height))
+                        .unwrap();
+                }
+            }
+        }};
+    }
+
+    fn assert_matches_reference(
+        tree: &mut OrchardTree,
+        reference: &ReferenceTree,
+        height: u32,
+        leaves: u64,
+    ) {
+        assert_eq!(
+            tree.root_at_checkpoint_id_caching(&height).unwrap(),
+            reference.root_at_checkpoint_id(&height).unwrap(),
+        );
+        for index in (0..leaves).step_by(41).step_by(9) {
+            let position = Position::from(index);
+            assert_eq!(
+                tree.witness_at_checkpoint_id_caching(position, &height)
+                    .unwrap(),
+                reference
+                    .witness_at_checkpoint_id(position, &height)
+                    .unwrap(),
+                "witness at {index}",
+            );
+        }
+    }
+
+    #[test]
+    fn caching_queries_match_the_reference_tree_across_shards() {
+        let mut tree: OrchardTree = ShardTree::new(MemoryShardStore::empty(), 100);
+        let mut reference: ReferenceTree = ShardTree::new(MemoryShardStore::empty(), 100);
+        // Query between blocks, as the generator does, so cached roots are reused across growth.
+        for block in 0..12u64 {
+            append_blocks!(tree, 0, block * LEAVES_PER_BLOCK, 1, block as u32 + 1);
+            append_blocks!(reference, 0, block * LEAVES_PER_BLOCK, 1, block as u32 + 1);
+            assert_matches_reference(
+                &mut tree,
+                &reference,
+                block as u32 + 1,
+                (block + 1) * LEAVES_PER_BLOCK,
+            );
+        }
+    }
+
+    #[test]
+    fn rollback_with_cached_roots_matches_a_tree_that_never_saw_the_fork() {
+        let mut tree: OrchardTree = ShardTree::new(MemoryShardStore::empty(), 100);
+        let mut reference: ReferenceTree = ShardTree::new(MemoryShardStore::empty(), 100);
+        append_blocks!(tree, 0, 0, 10, 1);
+        append_blocks!(reference, 0, 0, 10, 1);
+        tree.root_at_checkpoint_id_caching(&10).unwrap();
+
+        // These blocks cross a shard boundary, so the cap caches roots the rollback must discard.
+        append_blocks!(tree, 0xabc, 10 * LEAVES_PER_BLOCK, 8, 11);
+        tree.root_at_checkpoint_id_caching(&18).unwrap();
+        tree.witness_at_checkpoint_id_caching(Position::from(0u64), &18)
+            .unwrap();
+        assert!(tree.truncate_to_checkpoint(&10).unwrap());
+        assert_matches_reference(&mut tree, &reference, 10, 10 * LEAVES_PER_BLOCK);
+
+        append_blocks!(tree, 0x5, 10 * LEAVES_PER_BLOCK, 8, 11);
+        append_blocks!(reference, 0x5, 10 * LEAVES_PER_BLOCK, 8, 11);
+        assert_matches_reference(&mut tree, &reference, 18, 18 * LEAVES_PER_BLOCK);
+    }
 }
