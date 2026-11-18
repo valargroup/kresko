@@ -75,6 +75,8 @@ struct InFlight {
     next: Lane,
     submitted_at: Instant,
     submitted_height: u32,
+    /// Whether a submit task still holds this spend, so it may yet reach the node.
+    sending: bool,
 }
 
 /// One signed spend being sent to the node.
@@ -201,6 +203,7 @@ pub async fn run(
                         next: Lane { id: lane.id, txid: txid.clone(), output_index: 0, value: next_value },
                         submitted_at: Instant::now(),
                         submitted_height: tip,
+                        sending: true,
                     });
                     let submission = Submission { txid, bytes: Arc::new(bytes), spent: lane, build_duration_ms, attempt: 1 };
                     spawn_submit(&client, &semaphore, Some(permit), &done_tx, submission, Duration::ZERO);
@@ -210,6 +213,11 @@ pub async fn run(
                 let SubmitOutcome { submission, rpc_submit_duration_ms, result } = outcome;
                 // A resend the node already holds, or has mined, was accepted the first time.
                 let result = result.or_else(|error| if is_already_known(&error) { Ok(()) } else { Err(error) });
+                let resend = matches!(&result, Err(error) if !is_node_rejection(error))
+                    && submission.attempt < MAX_SUBMIT_ATTEMPTS;
+                if let Some(p) = pending.get_mut(&submission.txid) {
+                    p.sending = resend;
+                }
                 match result {
                     Ok(()) => {
                         submitted += 1;
@@ -221,7 +229,7 @@ pub async fn run(
                         if is_node_rejection(&error) {
                             pending.remove(&submission.txid);
                             parked.push(submission.spent);
-                        } else if submission.attempt < MAX_SUBMIT_ATTEMPTS && pending.contains_key(&submission.txid) {
+                        } else if resend && pending.contains_key(&submission.txid) {
                             // A timeout or unreadable reply may hide an accepted spend, so the same
                             // signed bytes go again. After the last try the spend stays pending: a
                             // block releases it, or `recover_dropped` once it's gone.
@@ -564,7 +572,7 @@ fn is_node_rejection(error: &anyhow::Error) -> bool {
 }
 
 /// Returns the pending spends submitted at least `STALE_BLOCKS` before `height` that
-/// the node's `pool` no longer holds.
+/// the node's `pool` no longer holds and no submit task can still send.
 fn dropped_spends(
     pending: &HashMap<String, InFlight>,
     pool: &HashSet<&str>,
@@ -573,7 +581,9 @@ fn dropped_spends(
     pending
         .iter()
         .filter(|(txid, p)| {
-            p.submitted_height + STALE_BLOCKS <= height && !pool.contains(txid.as_str())
+            !p.sending
+                && p.submitted_height + STALE_BLOCKS <= height
+                && !pool.contains(txid.as_str())
         })
         .map(|(txid, _)| txid.clone())
         .collect()
@@ -660,15 +670,21 @@ mod tests {
             next: lane,
             submitted_at: Instant::now(),
             submitted_height,
+            sending: false,
         }
     }
 
     #[test]
     fn only_stale_spends_missing_from_the_pool_are_dropped() {
+        let still_sending = InFlight {
+            sending: true,
+            ..in_flight(10)
+        };
         let pending: HashMap<String, InFlight> = [
             ("evicted".to_string(), in_flight(10)),
             ("still-pooled".to_string(), in_flight(10)),
             ("recent".to_string(), in_flight(12)),
+            ("still-sending".to_string(), still_sending),
         ]
         .into_iter()
         .collect();
