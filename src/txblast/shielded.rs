@@ -26,8 +26,11 @@ const LOOP_IDLE_SLEEP: Duration = Duration::from_millis(100);
 const BUILD_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const TARGET_HEIGHT_OFFSET_BLOCKS: u32 = 100;
 
-fn is_unknown_orchard_anchor(error: &str) -> bool {
-    error.contains("unknown Orchard anchor")
+/// Returns whether the node rejected a transaction for an anchor it doesn't know,
+/// in either shielded pool. From NU6.3 the blaster builds Ironwood, and the node's
+/// rejection names that pool instead of Orchard.
+fn is_unknown_shielded_anchor(error: &str) -> bool {
+    error.contains("unknown Orchard anchor") || error.contains("unknown Ironwood anchor")
 }
 
 fn is_witness_rebuild_error(error: &str) -> bool {
@@ -41,6 +44,8 @@ fn duration_ms_u64(duration_ms: u128) -> u64 {
 fn classify_error(error: &str) -> Option<&'static str> {
     if error.contains("unknown Orchard anchor") {
         Some("unknown_orchard_anchor")
+    } else if error.contains("unknown Ironwood anchor") {
+        Some("unknown_ironwood_anchor")
     } else if error.contains("same effects as one already in the mempool") {
         Some("same_effects_already_in_mempool")
     } else if error.contains("duplicate nullifier") {
@@ -1641,7 +1646,7 @@ pub async fn run(
                                         confirm_delay_ms: None,
                                         confirm_delay_blocks: None,
                                     });
-                                    if is_unknown_orchard_anchor(&error) {
+                                    if is_unknown_shielded_anchor(&error) {
                                         needs_rescan = true;
                                         rescan_error = Some(error);
                                     }
@@ -1687,7 +1692,7 @@ pub async fn run(
                                 confirm_delay_ms: None,
                                 confirm_delay_blocks: None,
                             });
-                            if is_unknown_orchard_anchor(&error) {
+                            if is_unknown_shielded_anchor(&error) {
                                 needs_rescan = true;
                                 rescan_error = Some(error);
                             }
@@ -1757,5 +1762,22 @@ pub async fn run(
         if !submitted_any {
             tokio::time::sleep(LOOP_IDLE_SLEEP).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_error, is_unknown_shielded_anchor};
+
+    #[test]
+    fn unknown_anchor_rejections_rescan_in_either_pool() {
+        // zakura-state's message for each pool, wrapped in an RPC error.
+        let orchard = "transaction rejected: unknown Orchard anchor: Root(..)";
+        let ironwood = "transaction rejected: unknown Ironwood anchor: Root(..)";
+
+        assert!(is_unknown_shielded_anchor(orchard));
+        assert!(is_unknown_shielded_anchor(ironwood));
+        assert_eq!(classify_error(orchard), Some("unknown_orchard_anchor"));
+        assert_eq!(classify_error(ironwood), Some("unknown_ironwood_anchor"));
     }
 }
