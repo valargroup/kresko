@@ -36,6 +36,10 @@ const MIN_LANE_VALUE: u64 = 20_000;
 const SETUP_CONFIRM_TIMEOUT: Duration = Duration::from_secs(600);
 /// Mature UTXOs shielded per source key.
 const MAX_SOURCE_UTXOS: usize = 64;
+/// Blocks a submitted spend may go unmined before the lane checks whether the node
+/// still holds it. A full pool evicts accepted spends, and an evicted spend's input
+/// is still unspent, so the lane can spend it again.
+const STALE_BLOCKS: u32 = 3;
 
 /// Settings for a transparent load run.
 pub struct TransparentLoadConfig<'a> {
@@ -58,6 +62,8 @@ struct Lane {
 
 /// A submitted lane spend, waiting to be seen in a block.
 struct InFlight {
+    /// The output this spend consumes, which the lane spends again if the node drops it.
+    spent: Lane,
     next: Lane,
     submitted_at: Instant,
     submitted_height: u32,
@@ -132,7 +138,8 @@ pub async fn run(
     let mut ticker = tokio::time::interval(Duration::from_millis(10));
     let mut block_poll = tokio::time::interval(Duration::from_millis(250));
     let mut progress = tokio::time::interval(Duration::from_secs(10));
-    let (mut submitted, mut confirmed, mut failed, mut retired) = (0u64, 0u64, 0u64, 0u64);
+    let (mut submitted, mut confirmed, mut failed, mut retired, mut dropped) =
+        (0u64, 0u64, 0u64, 0u64, 0u64);
     let started = Instant::now();
 
     loop {
@@ -168,6 +175,7 @@ pub async fn run(
                     // Recorded before sending: the block holding it may be scanned before the
                     // submit task reports back.
                     pending.insert(txid.clone(), InFlight {
+                        spent: lane.clone(),
                         next: Lane { id: lane.id, txid: txid.clone(), output_index: 0, value: next_value },
                         submitted_at: Instant::now(),
                         submitted_height: tip,
@@ -225,13 +233,16 @@ pub async fn run(
                     scanned = next;
                     ready.extend(parked.drain(..));
                 }
+                if height > tip {
+                    dropped += recover_dropped(&client, &mut pending, &mut ready, height, &tracer).await;
+                }
                 tip = height;
             }
             _ = progress.tick() => {
                 let secs = started.elapsed().as_secs_f64().max(1.0);
                 println!(
-                    "[transparent] height={} submitted={} ({:.1}/s) confirmed={} failed={} ready={} pending={} parked={} retired={}",
-                    tip, submitted, submitted as f64 / secs, confirmed, failed, ready.len(), pending.len(), parked.len(), retired,
+                    "[transparent] height={} submitted={} ({:.1}/s) confirmed={} failed={} dropped={} ready={} pending={} parked={} retired={}",
+                    tip, submitted, submitted as f64 / secs, confirmed, failed, dropped, ready.len(), pending.len(), parked.len(), retired,
                 );
             }
         }
@@ -418,6 +429,75 @@ async fn lane_script(client: &ZebraRpcClient, funded_key: &FundedKey) -> Result<
 }
 
 /// Returns the txids of the block at `height`.
+/// Returns lanes whose spend has gone `STALE_BLOCKS` unmined and is no longer in the
+/// node's pool to `ready`, and returns how many it recovered.
+///
+/// The blaster submits to the only mining node, so a spend that node evicted or let
+/// expire won't be mined, and its input is still the lane's to spend.
+async fn recover_dropped(
+    client: &ZebraRpcClient,
+    pending: &mut HashMap<String, InFlight>,
+    ready: &mut VecDeque<Lane>,
+    height: u32,
+    tracer: &OrchardTxblastTracer,
+) -> u64 {
+    if !pending
+        .values()
+        .any(|p| p.submitted_height + STALE_BLOCKS <= height)
+    {
+        return 0;
+    }
+    let Ok(pool) = client
+        .call_raw("getrawmempool", serde_json::json!([]))
+        .await
+    else {
+        return 0;
+    };
+    let pool: HashSet<&str> = pool
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|t| t.as_str())
+        .collect();
+    let stale = dropped_spends(pending, &pool, height);
+    for txid in &stale {
+        let dropped = pending
+            .remove(txid)
+            .expect("txid was just read from pending");
+        ready.push_back(dropped.spent);
+        trace(
+            tracer,
+            RuntimePhase::SteadyState,
+            height,
+            "pending_tx_evicted",
+            Some(txid),
+            None,
+            None,
+            None,
+            None,
+            ready.len(),
+            pending.len(),
+        );
+    }
+    stale.len() as u64
+}
+
+/// Returns the pending spends submitted at least `STALE_BLOCKS` before `height` that
+/// the node's `pool` no longer holds.
+fn dropped_spends(
+    pending: &HashMap<String, InFlight>,
+    pool: &HashSet<&str>,
+    height: u32,
+) -> Vec<String> {
+    pending
+        .iter()
+        .filter(|(txid, p)| {
+            p.submitted_height + STALE_BLOCKS <= height && !pool.contains(txid.as_str())
+        })
+        .map(|(txid, _)| txid.clone())
+        .collect()
+}
+
 async fn block_txids(client: &ZebraRpcClient, height: u32) -> Result<Vec<String>> {
     let block = client
         .call_raw("getblock", serde_json::json!([height.to_string(), 1]))
@@ -480,4 +560,40 @@ fn trace(
         confirm_delay_ms: confirm.map(|c| c.0),
         confirm_delay_blocks: confirm.map(|c| c.1),
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn in_flight(submitted_height: u32) -> InFlight {
+        let lane = Lane {
+            id: 0,
+            txid: "in".into(),
+            output_index: 0,
+            value: 50_000,
+        };
+        InFlight {
+            spent: lane.clone(),
+            next: lane,
+            submitted_at: Instant::now(),
+            submitted_height,
+        }
+    }
+
+    #[test]
+    fn only_stale_spends_missing_from_the_pool_are_dropped() {
+        let pending: HashMap<String, InFlight> = [
+            ("evicted".to_string(), in_flight(10)),
+            ("still-pooled".to_string(), in_flight(10)),
+            ("recent".to_string(), in_flight(12)),
+        ]
+        .into_iter()
+        .collect();
+        let pool: HashSet<&str> = ["still-pooled"].into_iter().collect();
+        assert_eq!(
+            dropped_spends(&pending, &pool, 10 + STALE_BLOCKS),
+            vec!["evicted".to_string()]
+        );
+    }
 }
