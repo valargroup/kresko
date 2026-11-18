@@ -263,182 +263,27 @@ async fn fund_runtime_keys_local(
         treasury_utxo_count,
     )
     .await?;
-    let treasury_orchard_keys = derive_orchard_keys(&treasury_key.secret_key.secret_bytes())?;
-
-    let shield_inputs: Vec<ShieldingInput> = treasury_utxos
+    let recipient_addresses = runtime_keys
         .iter()
-        .map(|utxo| ShieldingInput {
-            txid: utxo.txid.clone(),
-            output_index: utxo.output_index,
-            script: utxo.script.clone(),
-            value: utxo.satoshis,
-        })
-        .collect();
-    let shield_input_total: u64 = shield_inputs.iter().map(|input| input.value).sum();
-    let shield_value =
-        shield_input_total.saturating_sub(shielding_fee_multi(shield_inputs.len(), 1));
-    println!(
-        "[fund-runtime-keys] shielding {} treasury UTXOs worth {} zats",
-        shield_inputs.len(),
-        shield_input_total,
-    );
-    if shield_value < minimum_recipient_zats.saturating_mul(runtime_keys.len() as u64) {
-        anyhow::bail!(
-            "treasury UTXO value {} is too small to fund {} runtime keys after Orchard shielding",
-            shield_input_total,
-            runtime_keys.len(),
-        );
-    }
-
-    let shield_anchor = fetch_orchard_anchor(&client, &network_params).await?;
-    let shield_target_height = crate::txblast::local_target_height(current_height, 10);
-    let shield_submitted = build_and_send_shielding_tx_multi(
-        network_params,
+        .map(transparent_address_for_runtime_key)
+        .collect::<Result<Vec<_>>>()?;
+    let funding = shield_and_unshield(
         &client,
+        network_params,
         &treasury_key,
-        &treasury_orchard_keys,
-        &shield_inputs,
-        &[PlannedOutput {
-            role: crate::txblast::orchard::NoteRole::Reservoir,
-            value: shield_value,
-        }],
-        shield_anchor,
-        current_height,
-        shield_target_height,
-        PendingTxKind::WarmupShielding,
-    )
-    .await?;
-    let shield_txid = shield_submitted.txid;
-    let shield_pending = shield_submitted.pending;
-    println!(
-        "[fund-runtime-keys] submitted treasury shielding transaction {} ({} zats)",
-        shield_txid, shield_value
-    );
-
-    let shield_height = wait_for_tx_confirmation(
-        &client,
-        &shield_txid,
-        current_height,
+        &treasury_utxos,
+        &recipient_addresses,
+        minimum_recipient_zats,
         Duration::from_secs(confirm_timeout_secs),
+        "[fund-runtime-keys]",
     )
     .await?;
-
-    let orchard_runtime = OrchardBlastRuntimeConfig::from_parts(
-        OrchardTxblastConfig::default(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )?;
-    let tracer = OrchardTxblastTracer::from_config(&TxblastTraceConfig::default(), "treasury");
-    let mut tree: OrchardTree = OrchardTree::new(MemoryShardStore::empty(), 100);
-    let mut next_position = 0u64;
-    let mut nullifier_index = OrchardNullifierIndex::default();
-    let mut cursor = OrchardChainCursor::default();
-    let mut pending_txs = HashMap::from([(shield_txid.clone(), shield_pending)]);
-    let mut registry = LaneRegistry::default();
-    let mut treasury = TreasuryInventory::default();
-
-    // A public chain is millions of blocks long, and the only note that matters
-    // was created by the shielding transaction above. Seed the commitment tree
-    // from the node's treestate at the previous block and scan just that block.
-    let scan_start = shield_height;
-    if scan_start > 1 {
-        let frontier_height = scan_start - 1;
-        let pool = ShieldedPool::at_height(&network_params, frontier_height.into());
-        seed_orchard_tree_from_treestate(&mut tree, &client, frontier_height, pool).await?;
-        next_position = tree
-            .frontier()
-            .map_err(|e| anyhow::anyhow!("seeded Orchard frontier read failed: {e:?}"))?
-            .tree_size();
-    }
-
-    scan_block_range(
-        &client,
-        &treasury_orchard_keys,
-        &mut tree,
-        &mut next_position,
-        &mut nullifier_index,
-        scan_start,
+    let ShieldedFunding {
+        shield_txid,
         shield_height,
-        &mut pending_txs,
-        &mut registry,
-        &mut treasury,
-        &mut cursor,
-        &tracer,
-        &orchard_runtime,
-        RuntimePhase::BootstrapScan,
-        0.0,
-    )
-    .await?;
-
-    let funding_note = registry
-        .take_reservoir()
-        .context("failed to recover treasury Orchard note after shielding confirmation")?;
-    let checkpoint =
-        cursor
-            .latest_checkpoint()
-            .cloned()
-            .unwrap_or_else(|| crate::txblast::orchard::BlockRef {
-                height: shield_height,
-                hash: String::new(),
-            });
-    let funding_anchor = latest_checkpoint_anchor(&tree, &checkpoint)?;
-    let funding_witness = latest_witness(&tree, &funding_note, &checkpoint)?;
-
-    let recipient_count = runtime_keys.len();
-    let distributable = funding_note
-        .value()
-        .checked_sub(orchard_to_transparent_fee(recipient_count))
-        .context("treasury Orchard note is too small to fund runtime keys after spend fee")?;
-    let base_recipient_zats = distributable / recipient_count as u64;
-    if base_recipient_zats < minimum_recipient_zats {
-        anyhow::bail!(
-            "treasury Orchard note cannot fund {} runtime keys: {} zats available after fee, {} zats each, minimum required is {}",
-            recipient_count,
-            distributable,
-            base_recipient_zats,
-            minimum_recipient_zats,
-        );
-    }
-
-    let remainder = distributable % recipient_count as u64;
-    let mut recipients = Vec::with_capacity(recipient_count);
-    for (idx, key) in runtime_keys.iter().enumerate() {
-        let mut value = base_recipient_zats;
-        if idx == 0 {
-            value = value.saturating_add(remainder);
-        }
-        recipients.push((transparent_address_for_runtime_key(key)?, value));
-    }
-
-    let funding_target_height =
-        crate::txblast::local_target_height(client.get_block_count().await?, 10);
-    let funding_txid = build_and_send_orchard_to_transparent_tx(
-        network_params,
-        &client,
-        &treasury_orchard_keys,
-        &funding_note,
-        funding_witness,
-        funding_anchor,
-        funding_target_height,
-        &recipients,
-    )
-    .await?;
-    println!(
-        "[fund-runtime-keys] submitted transparent funding transaction {} to {} runtime keys (base={} zats, remainder={} zats)",
-        funding_txid, recipient_count, base_recipient_zats, remainder,
-    );
-
-    let funding_height = wait_for_tx_confirmation(
-        &client,
-        &funding_txid,
-        shield_height,
-        Duration::from_secs(confirm_timeout_secs),
-    )
-    .await?;
+        funding_txid,
+        funding_height,
+    } = funding;
     let verified_height = client.get_block_count().await?;
     let recipient_state = collect_runtime_recipient_state(
         &client,
@@ -525,6 +370,211 @@ async fn fund_runtime_keys_local(
             })
         }
     }
+}
+
+/// What [`shield_and_unshield`] submitted, and the heights at which both confirmed.
+pub(crate) struct ShieldedFunding {
+    pub(crate) shield_txid: String,
+    pub(crate) shield_height: u32,
+    pub(crate) funding_txid: String,
+    pub(crate) funding_height: u32,
+}
+
+/// Shields `utxos` of `source_key` into one Orchard note, then spends that note into
+/// equal transparent outputs to `recipients`, waiting for both to confirm.
+///
+/// Transparent coinbase may only be spent to shielded outputs, so this is how premine
+/// and mined coinbase become spendable transparent funds. Fails before sending
+/// anything if each recipient would get less than `minimum_each_zats`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn shield_and_unshield(
+    client: &ZebraRpcClient,
+    network_params: TxblastNetworkParams,
+    source_key: &FundedKey,
+    utxos: &[AddressUtxo],
+    recipients: &[TransparentAddress],
+    minimum_each_zats: u64,
+    confirm_timeout: Duration,
+    label: &str,
+) -> Result<ShieldedFunding> {
+    let current_height = client.get_block_count().await?;
+    let source_orchard_keys = derive_orchard_keys(&source_key.secret_key.secret_bytes())?;
+
+    let shield_inputs: Vec<ShieldingInput> = utxos
+        .iter()
+        .map(|utxo| ShieldingInput {
+            txid: utxo.txid.clone(),
+            output_index: utxo.output_index,
+            script: utxo.script.clone(),
+            value: utxo.satoshis,
+        })
+        .collect();
+    let shield_input_total: u64 = shield_inputs.iter().map(|input| input.value).sum();
+    let shield_value =
+        shield_input_total.saturating_sub(shielding_fee_multi(shield_inputs.len(), 1));
+    println!(
+        "{label} shielding {} treasury UTXOs worth {} zats",
+        shield_inputs.len(),
+        shield_input_total,
+    );
+    if shield_value < minimum_each_zats.saturating_mul(recipients.len() as u64) {
+        anyhow::bail!(
+            "treasury UTXO value {} is too small to fund {} runtime keys after Orchard shielding",
+            shield_input_total,
+            recipients.len(),
+        );
+    }
+
+    let shield_anchor = fetch_orchard_anchor(client, &network_params).await?;
+    let shield_target_height = crate::txblast::local_target_height(current_height, 10);
+    let shield_submitted = build_and_send_shielding_tx_multi(
+        network_params,
+        client,
+        source_key,
+        &source_orchard_keys,
+        &shield_inputs,
+        &[PlannedOutput {
+            role: crate::txblast::orchard::NoteRole::Reservoir,
+            value: shield_value,
+        }],
+        shield_anchor,
+        current_height,
+        shield_target_height,
+        PendingTxKind::WarmupShielding,
+    )
+    .await?;
+    let shield_txid = shield_submitted.txid;
+    let shield_pending = shield_submitted.pending;
+    println!(
+        "{label} submitted treasury shielding transaction {} ({} zats)",
+        shield_txid, shield_value
+    );
+
+    let shield_height =
+        wait_for_tx_confirmation(client, &shield_txid, current_height, confirm_timeout).await?;
+
+    let orchard_runtime = OrchardBlastRuntimeConfig::from_parts(
+        OrchardTxblastConfig::default(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
+    let tracer = OrchardTxblastTracer::from_config(&TxblastTraceConfig::default(), "treasury");
+    let mut tree: OrchardTree = OrchardTree::new(MemoryShardStore::empty(), 100);
+    let mut next_position = 0u64;
+    let mut nullifier_index = OrchardNullifierIndex::default();
+    let mut cursor = OrchardChainCursor::default();
+    let mut pending_txs = HashMap::from([(shield_txid.clone(), shield_pending)]);
+    let mut registry = LaneRegistry::default();
+    let mut treasury = TreasuryInventory::default();
+
+    // A public chain is millions of blocks long, and the only note that matters
+    // was created by the shielding transaction above. Seed the commitment tree
+    // from the node's treestate at the previous block and scan just that block.
+    let scan_start = shield_height;
+    if scan_start > 1 {
+        let frontier_height = scan_start - 1;
+        let pool = ShieldedPool::at_height(&network_params, frontier_height.into());
+        seed_orchard_tree_from_treestate(&mut tree, client, frontier_height, pool).await?;
+        next_position = tree
+            .frontier()
+            .map_err(|e| anyhow::anyhow!("seeded Orchard frontier read failed: {e:?}"))?
+            .tree_size();
+    }
+
+    scan_block_range(
+        client,
+        &source_orchard_keys,
+        &mut tree,
+        &mut next_position,
+        &mut nullifier_index,
+        scan_start,
+        shield_height,
+        &mut pending_txs,
+        &mut registry,
+        &mut treasury,
+        &mut cursor,
+        &tracer,
+        &orchard_runtime,
+        RuntimePhase::BootstrapScan,
+        0.0,
+    )
+    .await?;
+
+    let funding_note = registry
+        .take_reservoir()
+        .context("failed to recover treasury Orchard note after shielding confirmation")?;
+    let checkpoint =
+        cursor
+            .latest_checkpoint()
+            .cloned()
+            .unwrap_or_else(|| crate::txblast::orchard::BlockRef {
+                height: shield_height,
+                hash: String::new(),
+            });
+    let funding_anchor = latest_checkpoint_anchor(&tree, &checkpoint)?;
+    let funding_witness = latest_witness(&tree, &funding_note, &checkpoint)?;
+
+    let recipient_count = recipients.len();
+    let distributable = funding_note
+        .value()
+        .checked_sub(orchard_to_transparent_fee(recipient_count))
+        .context("treasury Orchard note is too small to fund runtime keys after spend fee")?;
+    let base_recipient_zats = distributable / recipient_count as u64;
+    if base_recipient_zats < minimum_each_zats {
+        anyhow::bail!(
+            "treasury Orchard note cannot fund {} runtime keys: {} zats available after fee, {} zats each, minimum required is {}",
+            recipient_count,
+            distributable,
+            base_recipient_zats,
+            minimum_each_zats,
+        );
+    }
+
+    let remainder = distributable % recipient_count as u64;
+    let recipients: Vec<(TransparentAddress, u64)> = recipients
+        .iter()
+        .enumerate()
+        .map(|(idx, address)| {
+            let value = if idx == 0 {
+                base_recipient_zats.saturating_add(remainder)
+            } else {
+                base_recipient_zats
+            };
+            (*address, value)
+        })
+        .collect();
+
+    let funding_target_height =
+        crate::txblast::local_target_height(client.get_block_count().await?, 10);
+    let funding_txid = build_and_send_orchard_to_transparent_tx(
+        network_params,
+        client,
+        &source_orchard_keys,
+        &funding_note,
+        funding_witness,
+        funding_anchor,
+        funding_target_height,
+        &recipients,
+    )
+    .await?;
+    println!(
+        "{label} submitted transparent funding transaction {} to {} runtime keys (base={} zats, remainder={} zats)",
+        funding_txid, recipient_count, base_recipient_zats, remainder,
+    );
+
+    let funding_height =
+        wait_for_tx_confirmation(client, &funding_txid, shield_height, confirm_timeout).await?;
+
+    Ok(ShieldedFunding {
+        shield_txid,
+        shield_height,
+        funding_txid,
+        funding_height,
+    })
 }
 
 fn read_existing_marker(path: &Path) -> Result<Option<String>> {
@@ -833,7 +883,7 @@ fn node_name() -> String {
 /// index already reports. That matters at scale: a miner address accumulates
 /// thousands of UTXOs, and asking the node to classify each one costs one RPC
 /// round trip each.
-async fn select_spendable_treasury_utxos(
+pub(crate) async fn select_spendable_treasury_utxos(
     client: &ZebraRpcClient,
     treasury_key: &FundedKey,
     current_height: u32,
@@ -907,7 +957,7 @@ async fn fetch_orchard_anchor(
     Ok(ct.unwrap())
 }
 
-async fn wait_for_tx_confirmation(
+pub(crate) async fn wait_for_tx_confirmation(
     client: &ZebraRpcClient,
     expected_txid: &str,
     start_height: u32,

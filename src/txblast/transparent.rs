@@ -21,7 +21,12 @@ pub(crate) fn load_funded_key(explicit_path: Option<&str>) -> Result<(FundedKey,
 
     let raw: LocalGenesisFundedKey =
         serde_json::from_str(&data).context("failed to parse funded key json")?;
+    Ok((funded_key_from_raw(raw)?, path))
+}
 
+/// Decodes a funded key entry, as stored in `funded_key.json` or `funded_keys.json`,
+/// checking that its public key matches its secret key.
+pub(crate) fn funded_key_from_raw(raw: LocalGenesisFundedKey) -> Result<FundedKey> {
     let key_bytes =
         hex::decode(&raw.secret_key_hex).context("funded key secret_key_hex is not valid hex")?;
     if key_bytes.len() != 32 {
@@ -49,15 +54,12 @@ pub(crate) fn load_funded_key(explicit_path: Option<&str>) -> Result<(FundedKey,
     let address =
         transparent::Address::from_str(&raw.address).context("funded key address is invalid")?;
 
-    Ok((
-        FundedKey {
-            name: raw.name,
-            address,
-            secret_key,
-            public_key,
-        },
-        path,
-    ))
+    Ok(FundedKey {
+        name: raw.name,
+        address,
+        secret_key,
+        public_key,
+    })
 }
 
 fn resolve_funded_key_path(explicit_path: Option<&str>) -> Result<PathBuf> {

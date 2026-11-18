@@ -492,6 +492,26 @@ enum Commands {
         /// Expected runtime funding transaction id for shielded bootstrap diagnostics
         #[arg(long)]
         expected_runtime_funding_txid: Option<String>,
+
+        /// Which transactions to send
+        #[arg(long, value_enum, default_value_t = txblast::LoadKind::Orchard)]
+        load: txblast::LoadKind,
+
+        /// Transparent lanes to create; each spends once per block it confirms in
+        #[arg(long, default_value = "20000")]
+        transparent_lanes: usize,
+
+        /// Most transparent sendrawtransaction calls in flight at once
+        #[arg(long, default_value = "256")]
+        transparent_max_in_flight: usize,
+
+        /// funded_keys.json whose keys also fund transparent lanes
+        #[arg(long)]
+        transparent_source_keys: Option<String>,
+
+        /// OP_RETURN payload bytes on each transparent lane spend (0 = none, at most 80)
+        #[arg(long, default_value = "0")]
+        transparent_null_data_bytes: usize,
     },
 
     /// Fund runtime keys locally from the cached bootstrap treasury (intended to run on remote nodes)
@@ -1515,6 +1535,11 @@ async fn main() -> Result<()> {
             funded_key_path,
             wallet_birthday_height,
             expected_runtime_funding_txid,
+            load,
+            transparent_lanes,
+            transparent_max_in_flight,
+            transparent_source_keys,
+            transparent_null_data_bytes,
         } => {
             txblast::run_local(
                 &rpc_endpoint,
@@ -1536,6 +1561,13 @@ async fn main() -> Result<()> {
                 funded_key_path.as_deref(),
                 expected_runtime_funding_txid.as_deref(),
                 wallet_birthday_height,
+                load,
+                txblast::transparent_load::TransparentLoadConfig {
+                    lanes: transparent_lanes,
+                    max_in_flight: transparent_max_in_flight,
+                    source_keys_path: transparent_source_keys.as_deref(),
+                    null_data_bytes: transparent_null_data_bytes,
+                },
             )
             .await?;
         }
