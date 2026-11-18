@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 use zcash_address::ZcashAddress;
 use zcash_transparent::address::TransparentAddress;
 
@@ -31,8 +31,12 @@ use crate::txblast::{TxblastNetworkParams, TxblastTraceConfig, local_target_heig
 
 /// Most lanes one fan-out transaction creates, which keeps each fan-out near 17 KB.
 const FAN_OUTPUTS: usize = 500;
-/// A lane is retired once it can't pay for another spend plus a little change.
+/// Least value a new lane is funded with.
 const MIN_LANE_VALUE: u64 = 20_000;
+/// Times one signed spend is sent when the node's reply is lost or unreadable.
+const MAX_SUBMIT_ATTEMPTS: u32 = 3;
+/// Wait before resending the same signed bytes.
+const RESUBMIT_DELAY: Duration = Duration::from_secs(1);
 /// How long setup waits for each funding transaction to confirm.
 const SETUP_CONFIRM_TIMEOUT: Duration = Duration::from_secs(600);
 /// Mature UTXOs shielded per source key.
@@ -88,13 +92,23 @@ struct InFlight {
     next: Lane,
     submitted_at: Instant,
     submitted_height: u32,
+    /// Whether a submit task still holds this spend, so it may yet reach the node.
+    sending: bool,
+}
+
+/// One signed spend being sent to the node.
+struct Submission {
+    txid: String,
+    bytes: Arc<Vec<u8>>,
+    spent: Lane,
+    build_duration_ms: u64,
+    /// 1 for the first send; resends of the same bytes count up from there.
+    attempt: u32,
 }
 
 /// What a submit task reports back to the run loop.
 struct SubmitOutcome {
-    txid: String,
-    spent: Lane,
-    build_duration_ms: u64,
+    submission: Submission,
     rpc_submit_duration_ms: u64,
     result: Result<()>,
 }
@@ -225,37 +239,38 @@ pub async fn run(
                         next: Lane { id: lane.id, txid: txid.clone(), output_index: 0, value: next_value },
                         submitted_at: Instant::now(),
                         submitted_height: tip,
+                        sending: true,
                     });
-                    let client = client.clone();
-                    let done_tx = done_tx.clone();
-                    tokio::spawn(async move {
-                        let rpc_start = Instant::now();
-                        let result = client.send_raw_transaction(&hex::encode(&bytes)).await.map(|_| ());
-                        drop(permit);
-                        let _ = done_tx.send(SubmitOutcome {
-                            txid,
-                            spent: lane,
-                            build_duration_ms,
-                            rpc_submit_duration_ms: rpc_start.elapsed().as_millis() as u64,
-                            result,
-                        });
-                    });
+                    let submission = Submission { txid, bytes: Arc::new(bytes), spent: lane, build_duration_ms, attempt: 1 };
+                    spawn_submit(&client, &semaphore, Some(permit), &done_tx, submission, Duration::ZERO);
                 }
             }
             Some(outcome) = done_rx.recv() => {
-                match outcome.result {
+                let SubmitOutcome { submission, rpc_submit_duration_ms, result } = outcome;
+                // A resend the node already holds, or has mined, was accepted the first time.
+                let result = result.or_else(|error| if is_already_known(&error) { Ok(()) } else { Err(error) });
+                let resend = matches!(&result, Err(error) if !is_node_rejection(error))
+                    && submission.attempt < MAX_SUBMIT_ATTEMPTS;
+                if let Some(p) = pending.get_mut(&submission.txid) {
+                    p.sending = resend;
+                }
+                match result {
                     Ok(()) => {
                         submitted += 1;
-                        trace(&tracer, RuntimePhase::SteadyState, tip, "tx_submitted", Some(&outcome.txid), None, Some(outcome.build_duration_ms), Some(outcome.rpc_submit_duration_ms), None, ready.len(), pending.len());
+                        trace(&tracer, RuntimePhase::SteadyState, tip, "tx_submitted", Some(&submission.txid), None, Some(submission.build_duration_ms), Some(rpc_submit_duration_ms), None, ready.len(), pending.len());
                     }
                     Err(error) => {
                         failed += 1;
-                        trace(&tracer, RuntimePhase::SteadyState, tip, "tx_submit_failed", Some(&outcome.txid), Some(error.to_string()), None, Some(outcome.rpc_submit_duration_ms), None, ready.len(), pending.len());
-                        // A timeout or unreadable reply may hide an accepted spend, so it stays
-                        // pending: a block releases it, or `recover_dropped` once it's gone.
+                        trace(&tracer, RuntimePhase::SteadyState, tip, "tx_submit_failed", Some(&submission.txid), Some(error.to_string()), None, Some(rpc_submit_duration_ms), None, ready.len(), pending.len());
                         if is_node_rejection(&error) {
-                            pending.remove(&outcome.txid);
-                            parked.push(outcome.spent);
+                            pending.remove(&submission.txid);
+                            parked.push(submission.spent);
+                        } else if resend && pending.contains_key(&submission.txid) {
+                            // A timeout or unreadable reply may hide an accepted spend, so the same
+                            // signed bytes go again. After the last try the spend stays pending: a
+                            // block releases it, or `recover_dropped` once it's gone.
+                            let retry = Submission { attempt: submission.attempt + 1, ..submission };
+                            spawn_submit(&client, &semaphore, None, &done_tx, retry, RESUBMIT_DELAY);
                         }
                     }
                 }
@@ -642,6 +657,52 @@ async fn recover_dropped(
     stale.len() as u64
 }
 
+/// Sends `submission` to the node after `delay`, holding `permit`, or a fresh one from
+/// `semaphore` when none is given, while the call is in flight.
+fn spawn_submit(
+    client: &Arc<ZebraRpcClient>,
+    semaphore: &Arc<Semaphore>,
+    permit: Option<OwnedSemaphorePermit>,
+    done_tx: &mpsc::UnboundedSender<SubmitOutcome>,
+    submission: Submission,
+    delay: Duration,
+) {
+    let (client, semaphore, done_tx) = (client.clone(), semaphore.clone(), done_tx.clone());
+    tokio::spawn(async move {
+        tokio::time::sleep(delay).await;
+        let permit = match permit {
+            Some(permit) => permit,
+            None => semaphore
+                .acquire_owned()
+                .await
+                .expect("semaphore is never closed"),
+        };
+        let rpc_start = Instant::now();
+        let result = client
+            .send_raw_transaction(&hex::encode(submission.bytes.as_slice()))
+            .await
+            .map(|_| ());
+        drop(permit);
+        let _ = done_tx.send(SubmitOutcome {
+            submission,
+            rpc_submit_duration_ms: rpc_start.elapsed().as_millis() as u64,
+            result,
+        });
+    });
+}
+
+/// Returns whether `error` says the node already holds or has mined this transaction.
+fn is_already_known(error: &anyhow::Error) -> bool {
+    let message = error.to_string();
+    [
+        "already exists in mempool",
+        "already queued",
+        "already in state",
+    ]
+    .iter()
+    .any(|known| message.contains(known))
+}
+
 /// Returns whether `error` is the node refusing the spend, as opposed to a timeout,
 /// dropped connection or unreadable reply that can't say whether the node took it.
 fn is_node_rejection(error: &anyhow::Error) -> bool {
@@ -649,7 +710,7 @@ fn is_node_rejection(error: &anyhow::Error) -> bool {
 }
 
 /// Returns the pending spends submitted at least `STALE_BLOCKS` before `height` that
-/// the node's `pool` no longer holds.
+/// the node's `pool` no longer holds and no submit task can still send.
 fn dropped_spends(
     pending: &HashMap<String, InFlight>,
     pool: &HashSet<&str>,
@@ -658,7 +719,9 @@ fn dropped_spends(
     pending
         .iter()
         .filter(|(txid, p)| {
-            p.submitted_height + STALE_BLOCKS <= height && !pool.contains(txid.as_str())
+            !p.sending
+                && p.submitted_height + STALE_BLOCKS <= height
+                && !pool.contains(txid.as_str())
         })
         .map(|(txid, _)| txid.clone())
         .collect()
@@ -745,15 +808,21 @@ mod tests {
             next: lane,
             submitted_at: Instant::now(),
             submitted_height,
+            sending: false,
         }
     }
 
     #[test]
     fn only_stale_spends_missing_from_the_pool_are_dropped() {
+        let still_sending = InFlight {
+            sending: true,
+            ..in_flight(10)
+        };
         let pending: HashMap<String, InFlight> = [
             ("evicted".to_string(), in_flight(10)),
             ("still-pooled".to_string(), in_flight(10)),
             ("recent".to_string(), in_flight(12)),
+            ("still-sending".to_string(), still_sending),
         ]
         .into_iter()
         .collect();
@@ -800,5 +869,15 @@ mod tests {
         let unreadable = anyhow::anyhow!("bad body").context("failed to parse RPC response");
         assert!(is_node_rejection(&refused));
         assert!(!is_node_rejection(&unreadable));
+    }
+
+    #[test]
+    fn a_resend_the_node_already_holds_counts_as_accepted() {
+        let held = anyhow::anyhow!(
+            "RPC error from sendrawtransaction: transaction already exists in mempool"
+        );
+        let full = anyhow::anyhow!("RPC error from sendrawtransaction: mempool is full");
+        assert!(is_already_known(&held));
+        assert!(!is_already_known(&full));
     }
 }
