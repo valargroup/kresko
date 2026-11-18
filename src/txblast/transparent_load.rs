@@ -204,9 +204,13 @@ pub async fn run(
                     }
                     Err(error) => {
                         failed += 1;
-                        pending.remove(&outcome.txid);
                         trace(&tracer, RuntimePhase::SteadyState, tip, "tx_submit_failed", Some(&outcome.txid), Some(error.to_string()), None, Some(outcome.rpc_submit_duration_ms), None, ready.len(), pending.len());
-                        parked.push(outcome.spent);
+                        // A timeout or unreadable reply may hide an accepted spend, so it stays
+                        // pending: a block releases it, or `recover_dropped` once it's gone.
+                        if is_node_rejection(&error) {
+                            pending.remove(&outcome.txid);
+                            parked.push(outcome.spent);
+                        }
                     }
                 }
             }
@@ -489,6 +493,12 @@ async fn recover_dropped(
     stale.len() as u64
 }
 
+/// Returns whether `error` is the node refusing the spend, as opposed to a timeout,
+/// dropped connection or unreadable reply that can't say whether the node took it.
+fn is_node_rejection(error: &anyhow::Error) -> bool {
+    error.to_string().starts_with("RPC error from ")
+}
+
 /// Returns the pending spends submitted at least `STALE_BLOCKS` before `height` that
 /// the node's `pool` no longer holds.
 fn dropped_spends(
@@ -603,5 +613,13 @@ mod tests {
             dropped_spends(&pending, &pool, 10 + STALE_BLOCKS),
             vec!["evicted".to_string()]
         );
+    }
+
+    #[test]
+    fn only_a_node_error_reply_counts_as_a_rejection() {
+        let refused = anyhow::anyhow!("RPC error from sendrawtransaction: mempool is full");
+        let unreadable = anyhow::anyhow!("bad body").context("failed to parse RPC response");
+        assert!(is_node_rejection(&refused));
+        assert!(!is_node_rejection(&unreadable));
     }
 }
