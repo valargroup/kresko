@@ -2,6 +2,7 @@ pub(crate) mod orchard;
 pub mod rpc;
 pub mod shielded;
 pub mod transparent;
+pub mod transparent_load;
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
@@ -292,6 +293,16 @@ impl OrchardBlastRuntimeConfig {
     }
 }
 
+/// Which transactions the local blaster sends.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum LoadKind {
+    /// Orchard lane spends, bound by proving.
+    #[default]
+    Orchard,
+    /// 1-in-1-out P2PKH spends, which need no proof and can fill blocks.
+    Transparent,
+}
+
 /// Run the transaction blaster locally (called on remote nodes).
 pub async fn run_local(
     rpc_endpoint: &str,
@@ -313,7 +324,29 @@ pub async fn run_local(
     funded_key_path: Option<&str>,
     expected_runtime_funding_txid: Option<&str>,
     wallet_birthday_height: Option<u32>,
+    load: LoadKind,
+    transparent: transparent_load::TransparentLoadConfig<'_>,
 ) -> Result<()> {
+    if load == LoadKind::Transparent {
+        let network_params =
+            TxblastNetworkParams::from_network_kind(network.unwrap_or(NetworkKind::LocalGenesis));
+        let (funded_key, key_path) = transparent::load_funded_key(funded_key_path)?;
+        println!(
+            "Starting transparent txblast (endpoint={rpc_endpoint}, rate={rate}/s, lanes={}, key='{}' from {})",
+            transparent.lanes,
+            funded_key.name,
+            key_path.display()
+        );
+        return transparent_load::run(
+            rpc_endpoint,
+            network_params,
+            &funded_key,
+            rate,
+            transparent,
+            &TxblastTraceConfig::from_args(trace_dir),
+        )
+        .await;
+    }
     let orchard_premine = OrchardTxblastConfig {
         lanes_per_miner: orchard_lanes_per_miner
             .unwrap_or_else(|| OrchardTxblastConfig::default().lanes_per_miner),
