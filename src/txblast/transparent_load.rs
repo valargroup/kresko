@@ -122,6 +122,9 @@ pub async fn run(
     let semaphore = Arc::new(Semaphore::new(config.max_in_flight));
     let (done_tx, mut done_rx) = mpsc::unbounded_channel::<SubmitOutcome>();
     let mut pending: HashMap<String, InFlight> = HashMap::new();
+    // Lanes whose spend the node refused, held until the next block: a full pool
+    // refuses the same spend again until its tip changes.
+    let mut parked: Vec<Lane> = Vec::new();
     let mut tip = client.get_block_count().await?;
     let mut scanned = tip;
     let mut credit = 0.0f64;
@@ -195,7 +198,7 @@ pub async fn run(
                         failed += 1;
                         pending.remove(&outcome.txid);
                         trace(&tracer, RuntimePhase::SteadyState, tip, "tx_submit_failed", Some(&outcome.txid), Some(error.to_string()), None, Some(outcome.rpc_submit_duration_ms), None, ready.len(), pending.len());
-                        ready.push_back(outcome.spent);
+                        parked.push(outcome.spent);
                     }
                 }
             }
@@ -220,14 +223,15 @@ pub async fn run(
                         }
                     }
                     scanned = next;
+                    ready.extend(parked.drain(..));
                 }
                 tip = height;
             }
             _ = progress.tick() => {
                 let secs = started.elapsed().as_secs_f64().max(1.0);
                 println!(
-                    "[transparent] height={} submitted={} ({:.1}/s) confirmed={} failed={} ready={} pending={} retired={}",
-                    tip, submitted, submitted as f64 / secs, confirmed, failed, ready.len(), pending.len(), retired,
+                    "[transparent] height={} submitted={} ({:.1}/s) confirmed={} failed={} ready={} pending={} parked={} retired={}",
+                    tip, submitted, submitted as f64 / secs, confirmed, failed, ready.len(), pending.len(), parked.len(), retired,
                 );
             }
         }
