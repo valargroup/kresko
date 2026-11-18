@@ -703,15 +703,54 @@ pub(crate) fn transparent_fee(inputs: usize, outputs: usize) -> u64 {
     MARGINAL_FEE * std::cmp::max(2, std::cmp::max(inputs, outputs)) as u64
 }
 
-/// Builds and signs a transaction spending `inputs` owned by `funded_key` to P2PKH
-/// `outputs`, and returns its txid and serialized bytes.
+/// Returns the ZIP-317 fee for a 1-in-1-out P2PKH spend that also carries a
+/// `null_data_bytes` OP_RETURN output (none when zero).
 ///
-/// The inputs must exceed the outputs by exactly [`transparent_fee`], or the build fails.
+/// ZIP-317 charges transparent outputs by serialized size, so a payload can add logical
+/// actions: an 80-byte one doubles the fee to 20,000 zats.
+pub(crate) fn self_spend_fee(
+    network_params: TxblastNetworkParams,
+    null_data_bytes: usize,
+) -> Result<u64> {
+    use zcash_primitives::transaction::fees::FeeRule;
+    use zcash_primitives::transaction::fees::transparent::{InputSize, OutputView};
+
+    let mut outputs = zcash_transparent::builder::TransparentBuilder::empty();
+    outputs
+        .add_output(&TransparentAddress::PublicKeyHash([0; 20]), Zatoshis::ZERO)
+        .map_err(|e| anyhow::anyhow!("adding fee output: {e}"))?;
+    if null_data_bytes != 0 {
+        outputs
+            .add_null_data_output(&vec![0; null_data_bytes])
+            .map_err(|e| anyhow::anyhow!("adding fee OP_RETURN: {e}"))?;
+    }
+    let fee = zip317::FeeRule::standard()
+        .fee_required(
+            &network_params,
+            BlockHeight::from_u32(1),
+            [InputSize::STANDARD_P2PKH],
+            outputs.outputs().iter().map(OutputView::serialized_size),
+            0,
+            0,
+            0,
+            0,
+        )
+        .map_err(|e| anyhow::anyhow!("calculating self-spend fee: {e}"))?;
+    Ok(u64::from(fee))
+}
+
+/// Builds and signs a transaction spending `inputs` owned by `funded_key` to P2PKH
+/// `outputs`, plus a `null_data_bytes` OP_RETURN output when nonzero, and returns its
+/// txid and serialized bytes.
+///
+/// The inputs must exceed the outputs by exactly the ZIP-317 fee for that shape
+/// ([`transparent_fee`] without OP_RETURN, [`self_spend_fee`] with it), or the build fails.
 pub(crate) fn build_transparent_tx(
     network_params: TxblastNetworkParams,
     funded_key: &FundedKey,
     inputs: &[TransparentInput<'_>],
     outputs: &[(TransparentAddress, u64)],
+    null_data_bytes: usize,
     target_height: u32,
 ) -> Result<(String, Vec<u8>)> {
     let build_config = BuildConfig::Standard {
@@ -736,6 +775,11 @@ pub(crate) fn build_transparent_tx(
         builder
             .add_transparent_output(recipient, value)
             .map_err(|e| anyhow::anyhow!("add_transparent_output: {e}"))?;
+    }
+    if null_data_bytes != 0 {
+        builder
+            .add_transparent_null_data_output::<zip317::FeeError>(&vec![0; null_data_bytes])
+            .map_err(|e| anyhow::anyhow!("add_transparent_null_data_output: {e}"))?;
     }
 
     let mut signing_set = TransparentSigningSet::new();
@@ -793,6 +837,7 @@ pub(crate) async fn build_and_send_transparent_to_transparent_tx(
             value: input_value,
         }],
         &[(*recipient, recipient_value)],
+        0,
         target_height,
     )?;
     client.send_raw_transaction(&hex::encode(&tx_bytes)).await
