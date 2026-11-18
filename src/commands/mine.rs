@@ -168,6 +168,9 @@ pub struct MinerOptions {
     /// change instead of waiting for a fully assembled template.
     pub mine_provisional_empty_templates: bool,
 
+    /// Wait until template transactions contain at least this many bytes.
+    pub minimum_template_bytes: usize,
+
     /// Stop after this many solver runs. `None` mines until the process exits.
     pub max_runs: Option<u64>,
 
@@ -189,6 +192,7 @@ impl Default for MinerOptions {
             submit_stale_solutions: false,
             template_refresh_interval: Some(Duration::from_secs(60)),
             mine_provisional_empty_templates: false,
+            minimum_template_bytes: 0,
             max_runs: None,
             compact_submission: false,
         }
@@ -243,7 +247,6 @@ pub async fn run_with(
         if options.max_runs.is_some_and(|max| runs >= max) {
             return Ok(());
         }
-        runs += 1;
 
         // 1. Get block template
         let (template, current_is_provisional) = if let Some(pending) = pending_template.take() {
@@ -277,11 +280,6 @@ pub async fn run_with(
         let tx_bytes = template_summary.transaction_bytes;
         longpollid = template_summary.longpollid.clone();
 
-        let mempool_client = client.clone();
-        let mempool_endpoint = rpc_endpoint.to_string();
-        let mempool_probe =
-            tokio::spawn(async move { get_mempool_info(&mempool_client, &mempool_endpoint).await });
-
         println!(
             "Got template: height={template_height}, transactions={tx_count}, tx_bytes={tx_bytes}"
         );
@@ -291,7 +289,11 @@ pub async fn run_with(
             &MineLogEntry {
                 ts_unix_ms: now_unix_ms(),
                 height: template_height,
-                event: "template_received",
+                event: if tx_bytes < options.minimum_template_bytes {
+                    "template_waiting_for_fill"
+                } else {
+                    "template_received"
+                },
                 solve_time_ms: None,
                 block_hash: None,
                 submit_result: None,
@@ -311,6 +313,21 @@ pub async fn run_with(
                 error: None,
             },
         );
+
+        if tx_bytes < options.minimum_template_bytes {
+            println!(
+                "Waiting for template fill: {tx_bytes} < {} bytes",
+                options.minimum_template_bytes
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            continue;
+        }
+        runs += 1;
+
+        let mempool_client = client.clone();
+        let mempool_endpoint = rpc_endpoint.to_string();
+        let mempool_probe =
+            tokio::spawn(async move { get_mempool_info(&mempool_client, &mempool_endpoint).await });
 
         // 2. Parse template into a raw block. Template transactions can use
         // transaction versions newer than Kresko needs to understand.
@@ -1414,8 +1431,43 @@ mod tests {
             template_refresh_interval: None,
             compact_submission: false,
             mine_provisional_empty_templates: false,
+            minimum_template_bytes: 0,
             max_runs: Some(1),
         }
+    }
+
+    #[tokio::test]
+    async fn minimum_fill_waits_without_submitting_until_transactions_arrive() {
+        let node = MockNode::new(Template {
+            height: 101,
+            prev_hash: TIP0.to_string(),
+            longpollid: "underfilled".to_string(),
+            transactions: 1,
+            submit_old: Some(true),
+        });
+        let endpoint = serve(node.clone()).await;
+        let mut opts = options("minimum-fill", false);
+        opts.minimum_template_bytes = 16;
+        let miner = tokio::spawn(async move {
+            run_with(&endpoint, Path::new("/nonexistent/zebrad.toml"), opts)
+                .await
+                .unwrap()
+        });
+        tokio::time::sleep(PASS * 2).await;
+        assert!(node.submitted.lock().unwrap().is_empty());
+        assert!(!miner.is_finished());
+        node.state.send_replace(Template {
+            height: 101,
+            prev_hash: TIP0.to_string(),
+            longpollid: "filled".to_string(),
+            transactions: 2,
+            submit_old: Some(true),
+        });
+        tokio::time::timeout(Duration::from_secs(10), miner)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(node.submitted.lock().unwrap().len(), 1);
     }
 
     /// Mines one template, replaces it mid-pass with `next`, and returns every

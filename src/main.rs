@@ -266,6 +266,10 @@ enum Commands {
         #[arg(long)]
         mine_provisional_empty_templates: bool,
 
+        /// Wait until template transactions contain at least this many bytes.
+        #[arg(long, default_value_t = 0)]
+        minimum_template_bytes: usize,
+
         /// Submit the solved header through `submitsolution` instead of sending
         /// the whole block through `submitblock`.
         ///
@@ -1394,6 +1398,7 @@ async fn main() -> Result<()> {
             submit_stale_solutions,
             template_refresh_seconds,
             mine_provisional_empty_templates,
+            minimum_template_bytes,
             compact_submission,
         } => {
             commands::mine::run_with(
@@ -1404,6 +1409,7 @@ async fn main() -> Result<()> {
                     template_refresh_interval: (template_refresh_seconds > 0)
                         .then(|| std::time::Duration::from_secs(template_refresh_seconds)),
                     mine_provisional_empty_templates,
+                    minimum_template_bytes,
                     compact_submission,
                     ..Default::default()
                 },
