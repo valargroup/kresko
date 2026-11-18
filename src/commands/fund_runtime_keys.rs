@@ -385,8 +385,8 @@ async fn fund_runtime_keys_local(
                 height: shield_height,
                 hash: String::new(),
             });
-    let funding_anchor = latest_checkpoint_anchor(&tree, &checkpoint)?;
-    let funding_witness = latest_witness(&tree, &funding_note, &checkpoint)?;
+    let funding_anchor = latest_checkpoint_anchor(&mut tree, &checkpoint)?;
+    let funding_witness = latest_witness(&mut tree, &funding_note, &checkpoint)?;
 
     let recipient_count = runtime_keys.len();
     let distributable = funding_note
@@ -829,10 +829,8 @@ fn node_name() -> String {
 /// Pick up to `max_count` treasury UTXOs, largest first.
 ///
 /// A UTXO deeper than the coinbase maturity window is spendable whether or not
-/// it is a coinbase output, so maturity is decided from the height the address
-/// index already reports. That matters at scale: a miner address accumulates
-/// thousands of UTXOs, and asking the node to classify each one costs one RPC
-/// round trip each.
+/// it is a coinbase output. Younger outputs require transaction classification
+/// because ordinary confirmed outputs have no coinbase maturity delay.
 async fn select_spendable_treasury_utxos(
     client: &ZebraRpcClient,
     treasury_key: &FundedKey,
@@ -842,12 +840,21 @@ async fn select_spendable_treasury_utxos(
     if max_count == 0 {
         anyhow::bail!("--treasury-utxo-count must be greater than 0");
     }
-    let mut utxos: Vec<AddressUtxo> = client
+    let candidates = client
         .get_address_utxos(&treasury_key.address.to_string())
-        .await?
-        .into_iter()
-        .filter(|utxo| current_height >= utxo.height.saturating_add(COINBASE_MATURITY))
-        .collect();
+        .await?;
+    let mut utxos = Vec::new();
+    let mut coinbase_cache = HashMap::new();
+    for utxo in candidates {
+        if utxo.height == 0 || utxo.height > current_height {
+            continue;
+        }
+        if current_height >= utxo.height.saturating_add(COINBASE_MATURITY)
+            || !is_coinbase_transaction(client, &utxo.txid, &mut coinbase_cache).await?
+        {
+            utxos.push(utxo);
+        }
+    }
 
     if utxos.is_empty() {
         anyhow::bail!(

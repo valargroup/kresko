@@ -63,3 +63,6 @@ getrandom_04 = { package = "getrandom", version = "0.4", features = ["sys_rng"] 
 # dependency from the published Common revision for standalone builds.
 [patch."https://github.com/zakura-core/zakura.git"]
 zakura-equihash = { git = "https://github.com/zakura-core/common.git", rev = "513fe55339764bfbcf934765b382c5320abdef93" }
+
+[dev-dependencies]
+zakura-script = { git = "https://github.com/zakura-core/zakura.git", rev = "24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10" }

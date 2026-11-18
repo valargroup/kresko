@@ -266,6 +266,10 @@ enum Commands {
         #[arg(long)]
         mine_provisional_empty_templates: bool,
 
+        /// Wait until template transactions contain at least this many bytes.
+        #[arg(long, default_value_t = 0)]
+        minimum_template_bytes: usize,
+
         /// Submit the solved header through `submitsolution` instead of sending
         /// the whole block through `submitblock`.
         ///
@@ -410,6 +414,9 @@ enum Commands {
         #[arg(long, default_value = "pow-sim-matrix.csv")]
         csv: String,
     },
+
+    /// Generate transparent self-spends on a private experiment chain.
+    TxblastTransparentLocal(txblast::transparent_runtime::Options),
 
     /// Run txblast locally (intended to run on remote nodes)
     TxblastLocal {
@@ -921,6 +928,7 @@ impl Commands {
             | Commands::PowBench { .. }
             | Commands::PowSimulateMatrix { .. }
             | Commands::TxblastLocal { .. }
+            | Commands::TxblastTransparentLocal(..)
             | Commands::FundRuntimeKeysLocal { .. }
             | Commands::SeedLocal { .. }
             | Commands::TxblastStatusLocal { .. } => None,
@@ -1378,6 +1386,7 @@ async fn main() -> Result<()> {
             submit_stale_solutions,
             template_refresh_seconds,
             mine_provisional_empty_templates,
+            minimum_template_bytes,
             compact_submission,
         } => {
             commands::mine::run_with(
@@ -1388,6 +1397,7 @@ async fn main() -> Result<()> {
                     template_refresh_interval: (template_refresh_seconds > 0)
                         .then(|| std::time::Duration::from_secs(template_refresh_seconds)),
                     mine_provisional_empty_templates,
+                    minimum_template_bytes,
                     compact_submission,
                     ..Default::default()
                 },
@@ -1493,6 +1503,9 @@ async fn main() -> Result<()> {
                 csv_path: csv,
             };
             pow_sim::run_matrix(cli)?;
+        }
+        Commands::TxblastTransparentLocal(options) => {
+            txblast::transparent_runtime::run(options).await?;
         }
         Commands::TxblastLocal {
             rpc_endpoint,

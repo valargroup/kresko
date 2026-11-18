@@ -1,7 +1,10 @@
 pub(crate) mod orchard;
+mod prover;
 pub mod rpc;
 pub mod shielded;
 pub mod transparent;
+pub(crate) mod transparent_builder;
+pub mod transparent_runtime;
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
