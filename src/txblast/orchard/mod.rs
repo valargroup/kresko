@@ -14,8 +14,7 @@ pub(crate) use builder::{
     build_lane_advance_tx, build_transparent_tx, decode_txblast_note_role, derive_orchard_keys,
     min_bootstrap_shield_value, min_lane_value, min_treasury_reseed_value, orchard_fanout_fee,
     orchard_to_transparent_fee, orchard_to_transparent_with_change_fee, plan_shielding_outputs,
-    self_spend_fee, shielding_fee, shielding_fee_multi, transparent_fee,
-    transparent_to_transparent_fee,
+    shielding_fee, shielding_fee_multi, transparent_fee, transparent_to_transparent_fee,
 };
 pub(crate) use planner::{pending_counts, pending_trace_summary, plan_next_work};
 pub(crate) use scanner::{

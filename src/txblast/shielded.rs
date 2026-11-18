@@ -1344,7 +1344,7 @@ pub async fn run(
                 }
             }
 
-            let anchor = latest_checkpoint_anchor(&tree, &checkpoint)?;
+            let anchor = latest_checkpoint_anchor(&mut tree, &checkpoint)?;
             let target_height = super::local_target_height(current, TARGET_HEIGHT_OFFSET_BLOCKS);
 
             // Determine how many items we can batch.
@@ -1389,7 +1389,7 @@ pub async fn run(
                             Some("lane_advance"),
                         );
 
-                        let merkle_path = match latest_witness(&tree, &tracked, &checkpoint) {
+                        let merkle_path = match latest_witness(&mut tree, &tracked, &checkpoint) {
                             Ok(path) => path,
                             Err(e) => {
                                 let error = e.to_string();

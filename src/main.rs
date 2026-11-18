@@ -266,6 +266,10 @@ enum Commands {
         #[arg(long)]
         mine_provisional_empty_templates: bool,
 
+        /// Wait until template transactions contain at least this many bytes.
+        #[arg(long, default_value_t = 0)]
+        minimum_template_bytes: usize,
+
         /// Submit the solved header through `submitsolution` instead of sending
         /// the whole block through `submitblock`.
         ///
@@ -509,9 +513,15 @@ enum Commands {
         #[arg(long)]
         transparent_source_keys: Option<String>,
 
-        /// OP_RETURN payload bytes on each transparent lane spend (0 = none, at most 80)
-        #[arg(long, default_value = "0")]
-        transparent_null_data_bytes: usize,
+        /// Serialized sizes for transparent spends, comma-separated and assigned to lanes
+        /// in turn. 0 sends a plain 1-in-1-out spend. Larger sizes add one OP_RETURN
+        /// output, which nodes accept only up to `mempool.max_datacarrier_bytes`.
+        #[arg(long, value_delimiter = ',')]
+        transparent_tx_bytes: Vec<usize>,
+
+        /// Zatoshis per ZIP 317 logical action that sized transparent spends pay
+        #[arg(long, default_value = "5000")]
+        transparent_marginal_fee: u64,
     },
 
     /// Fund runtime keys locally from the cached bootstrap treasury (intended to run on remote nodes)
@@ -1398,6 +1408,7 @@ async fn main() -> Result<()> {
             submit_stale_solutions,
             template_refresh_seconds,
             mine_provisional_empty_templates,
+            minimum_template_bytes,
             compact_submission,
         } => {
             commands::mine::run_with(
@@ -1408,6 +1419,7 @@ async fn main() -> Result<()> {
                     template_refresh_interval: (template_refresh_seconds > 0)
                         .then(|| std::time::Duration::from_secs(template_refresh_seconds)),
                     mine_provisional_empty_templates,
+                    minimum_template_bytes,
                     compact_submission,
                     ..Default::default()
                 },
@@ -1539,7 +1551,8 @@ async fn main() -> Result<()> {
             transparent_lanes,
             transparent_max_in_flight,
             transparent_source_keys,
-            transparent_null_data_bytes,
+            transparent_tx_bytes,
+            transparent_marginal_fee,
         } => {
             txblast::run_local(
                 &rpc_endpoint,
@@ -1566,7 +1579,8 @@ async fn main() -> Result<()> {
                     lanes: transparent_lanes,
                     max_in_flight: transparent_max_in_flight,
                     source_keys_path: transparent_source_keys.as_deref(),
-                    null_data_bytes: transparent_null_data_bytes,
+                    tx_bytes: transparent_tx_bytes,
+                    marginal_fee: transparent_marginal_fee,
                 },
             )
             .await?;
