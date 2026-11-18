@@ -263,8 +263,10 @@ pub async fn run(
                         failed += 1;
                         trace(&tracer, RuntimePhase::SteadyState, tip, "tx_submit_failed", Some(&submission.txid), Some(error.to_string()), None, Some(rpc_submit_duration_ms), None, ready.len(), pending.len());
                         if is_node_rejection(&error) {
-                            pending.remove(&submission.txid);
-                            parked.push(submission.spent);
+                            // A spend no longer pending was mined, so its input is gone.
+                            if pending.remove(&submission.txid).is_some() {
+                                parked.push(submission.spent);
+                            }
                         } else if resend && pending.contains_key(&submission.txid) {
                             // A timeout or unreadable reply may hide an accepted spend, so the same
                             // signed bytes go again. After the last try the spend stays pending: a
@@ -698,6 +700,8 @@ fn is_already_known(error: &anyhow::Error) -> bool {
         "already exists in mempool",
         "already queued",
         "already in state",
+        // The mempool's cached rejection of a transaction a block has mined.
+        "was committed to the best chain",
     ]
     .iter()
     .any(|known| message.contains(known))
@@ -876,8 +880,12 @@ mod tests {
         let held = anyhow::anyhow!(
             "RPC error from sendrawtransaction: transaction already exists in mempool"
         );
+        let mined = anyhow::anyhow!(
+            "RPC error from sendrawtransaction: any transaction with the same effects will be rejected from the mempool until a chain reset: transaction was committed to the best chain"
+        );
         let full = anyhow::anyhow!("RPC error from sendrawtransaction: mempool is full");
         assert!(is_already_known(&held));
+        assert!(is_already_known(&mined));
         assert!(!is_already_known(&full));
     }
 }
