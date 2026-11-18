@@ -233,7 +233,9 @@ pub async fn run(
                     scanned = next;
                     ready.extend(parked.drain(..));
                 }
-                if height > tip {
+                // Only once every block up to `height` is scanned, so a mined spend is
+                // never mistaken for a dropped one.
+                if height > tip && scanned == height {
                     dropped += recover_dropped(&client, &mut pending, &mut ready, height, &tracer).await;
                 }
                 tip = height;
@@ -428,12 +430,14 @@ async fn lane_script(client: &ZebraRpcClient, funded_key: &FundedKey) -> Result<
         .context("the blaster address has no UTXO to read its script from")
 }
 
-/// Returns the txids of the block at `height`.
 /// Returns lanes whose spend has gone `STALE_BLOCKS` unmined and is no longer in the
 /// node's pool to `ready`, and returns how many it recovered.
 ///
-/// The blaster submits to the only mining node, so a spend that node evicted or let
-/// expire won't be mined, and its input is still the lane's to spend.
+/// `height` must be the last block the caller scanned. The blaster submits to the only
+/// mining node, so a spend that node evicted or let expire won't be mined, and its
+/// input is still the lane's to spend. If a block arrives while the pool is read, a
+/// spend missing from the pool may be in that block, so nothing is recovered until the
+/// next scan.
 async fn recover_dropped(
     client: &ZebraRpcClient,
     pending: &mut HashMap<String, InFlight>,
@@ -453,6 +457,9 @@ async fn recover_dropped(
     else {
         return 0;
     };
+    if client.get_block_count().await.ok() != Some(height) {
+        return 0;
+    }
     let pool: HashSet<&str> = pool
         .as_array()
         .into_iter()
@@ -498,6 +505,7 @@ fn dropped_spends(
         .collect()
 }
 
+/// Returns the txids of the block at `height`.
 async fn block_txids(client: &ZebraRpcClient, height: u32) -> Result<Vec<String>> {
     let block = client
         .call_raw("getblock", serde_json::json!([height.to_string(), 1]))
