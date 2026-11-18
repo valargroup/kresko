@@ -3,6 +3,7 @@ pub mod rpc;
 pub mod shielded;
 pub mod transparent;
 pub mod transparent_load;
+mod transparent_sized;
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};

@@ -512,6 +512,16 @@ enum Commands {
         /// funded_keys.json whose keys also fund transparent lanes
         #[arg(long)]
         transparent_source_keys: Option<String>,
+
+        /// Serialized sizes for transparent spends, comma-separated and assigned to lanes
+        /// in turn. 0 sends a plain 1-in-1-out spend. Larger sizes add one OP_RETURN
+        /// output, which nodes accept only up to `mempool.max_datacarrier_bytes`.
+        #[arg(long, value_delimiter = ',')]
+        transparent_tx_bytes: Vec<usize>,
+
+        /// Zatoshis per ZIP 317 logical action that sized transparent spends pay
+        #[arg(long, default_value = "5000")]
+        transparent_marginal_fee: u64,
     },
 
     /// Fund runtime keys locally from the cached bootstrap treasury (intended to run on remote nodes)
@@ -1541,6 +1551,8 @@ async fn main() -> Result<()> {
             transparent_lanes,
             transparent_max_in_flight,
             transparent_source_keys,
+            transparent_tx_bytes,
+            transparent_marginal_fee,
         } => {
             txblast::run_local(
                 &rpc_endpoint,
@@ -1567,6 +1579,8 @@ async fn main() -> Result<()> {
                     lanes: transparent_lanes,
                     max_in_flight: transparent_max_in_flight,
                     source_keys_path: transparent_source_keys.as_deref(),
+                    tx_bytes: transparent_tx_bytes,
+                    marginal_fee: transparent_marginal_fee,
                 },
             )
             .await?;

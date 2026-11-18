@@ -26,6 +26,7 @@ use crate::txblast::orchard::{
 };
 use crate::txblast::rpc::ZebraRpcClient;
 use crate::txblast::transparent::{FundedKey, funded_key_from_raw};
+use crate::txblast::transparent_sized;
 use crate::txblast::{TxblastNetworkParams, TxblastTraceConfig, local_target_height};
 
 /// Most lanes one fan-out transaction creates, which keeps each fan-out near 17 KB.
@@ -49,6 +50,26 @@ pub struct TransparentLoadConfig<'a> {
     pub max_in_flight: usize,
     /// Optional `funded_keys.json` whose keys also fund the lanes.
     pub source_keys_path: Option<&'a str>,
+    /// Serialized sizes for lane spends, assigned to lanes in turn. Zero means a plain
+    /// 1-in-1-out spend; empty sends only plain spends.
+    pub tx_bytes: Vec<usize>,
+    /// Zatoshis per ZIP 317 logical action that sized spends pay.
+    pub marginal_fee: u64,
+}
+
+/// The spend one lane sends, and what it costs.
+#[derive(Clone, Copy, Debug)]
+struct SpendSize {
+    /// `None` sends the builder's plain spend.
+    target_bytes: Option<usize>,
+    fee: u64,
+}
+
+impl SpendSize {
+    /// The least a lane must hold to send this spend and keep a little change.
+    fn min_lane_value(&self) -> u64 {
+        self.fee + MIN_LANE_VALUE - transparent_fee(1, 1)
+    }
 }
 
 /// One lane's current unspent output, at the blaster's address.
@@ -93,6 +114,15 @@ pub async fn run(
     let client = Arc::new(ZebraRpcClient::new(rpc_endpoint));
     let tracer = OrchardTxblastTracer::from_config(trace_config, &funded_key.name);
     let address = transparent_address(&funded_key.address.to_string())?;
+    let sizes = plan_spend_sizes(
+        network_params,
+        funded_key,
+        &address,
+        &config.tx_bytes,
+        config.marginal_fee,
+        client.get_block_count().await?,
+    )?;
+    let size_of = |lane: &Lane| sizes[lane.id as usize % sizes.len()];
 
     let sources = source_keys(funded_key, config.source_keys_path)?;
     let fan_utxos = fund_fan_utxos(
@@ -105,6 +135,7 @@ pub async fn run(
     )
     .await?;
     let script = lane_script(&client, funded_key).await?;
+    let script_bytes = hex::decode(&script).context("lane script is not hex")?;
     let mut ready = split_into_lanes(
         &client,
         network_params,
@@ -124,6 +155,13 @@ pub async fn run(
         rate,
         config.max_in_flight,
     );
+    for size in sizes.iter().filter(|size| size.target_bytes.is_some()) {
+        println!(
+            "[transparent] lanes sized {:?} bytes afford about {} spends each",
+            size.target_bytes,
+            lane_value.saturating_sub(MIN_LANE_VALUE) / size.fee,
+        );
+    }
 
     let semaphore = Arc::new(Semaphore::new(config.max_in_flight));
     let (done_tx, mut done_rx) = mpsc::unbounded_channel::<SubmitOutcome>();
@@ -152,19 +190,27 @@ pub async fn run(
                 last_tick = now;
                 while credit >= 1.0 && semaphore.available_permits() > 0 {
                     let Some(lane) = ready.pop_front() else { break };
+                    let size = size_of(&lane);
+                    if lane.value < size.min_lane_value() {
+                        retired += 1;
+                        continue;
+                    }
                     credit -= 1.0;
                     let permit = semaphore.clone().acquire_owned().await.expect("semaphore is never closed");
                     let build_start = Instant::now();
-                    let next_value = lane.value - transparent_fee(1, 1);
-                    let built = build_transparent_tx(
+                    let built = build_lane_spend(
                         network_params,
                         funded_key,
-                        &[TransparentInput { txid: &lane.txid, output_index: lane.output_index, script: &script, value: lane.value }],
-                        &[(address, next_value)],
-                        local_target_height(tip, 1),
+                        &address,
+                        &script,
+                        &script_bytes,
+                        &lane,
+                        size,
+                        config.marginal_fee,
+                        tip,
                     );
                     let build_duration_ms = build_start.elapsed().as_millis() as u64;
-                    let (txid, bytes) = match built {
+                    let (txid, bytes, next_value) = match built {
                         Ok(built) => built,
                         Err(error) => {
                             failed += 1;
@@ -227,7 +273,7 @@ pub async fn run(
                                 next.saturating_sub(done.submitted_height),
                             );
                             trace(&tracer, RuntimePhase::SteadyState, next, "tx_confirmed", Some(&txid), None, None, None, Some(delay), ready.len(), pending.len());
-                            if done.next.value >= MIN_LANE_VALUE {
+                            if done.next.value >= size_of(&done.next).min_lane_value() {
                                 ready.push_back(done.next);
                             } else {
                                 retired += 1;
@@ -253,6 +299,109 @@ pub async fn run(
             }
         }
     }
+}
+
+/// Builds `lane`'s next spend at `size`, returning its txid, bytes and change value.
+#[allow(clippy::too_many_arguments)]
+fn build_lane_spend(
+    network_params: TxblastNetworkParams,
+    funded_key: &FundedKey,
+    address: &TransparentAddress,
+    script: &str,
+    script_bytes: &[u8],
+    lane: &Lane,
+    size: SpendSize,
+    marginal_fee: u64,
+    tip: u32,
+) -> Result<(String, Vec<u8>, u64)> {
+    let plain_change = lane
+        .value
+        .checked_sub(transparent_fee(1, 1))
+        .context("lane value cannot pay a plain spend's fee")?;
+    let (txid, bytes) = build_transparent_tx(
+        network_params,
+        funded_key,
+        &[TransparentInput {
+            txid: &lane.txid,
+            output_index: lane.output_index,
+            script,
+            value: lane.value,
+        }],
+        &[(*address, plain_change)],
+        local_target_height(tip, 1),
+    )?;
+    let Some(target_bytes) = size.target_bytes else {
+        return Ok((txid, bytes, plain_change));
+    };
+    let resized = transparent_sized::resize(
+        &bytes,
+        funded_key,
+        lane.value,
+        script_bytes,
+        target_bytes,
+        marginal_fee,
+    )?;
+    Ok((resized.txid, resized.bytes, lane.value - resized.fee))
+}
+
+/// Builds one spend at each requested size from a stand-in lane, so a bad size fails
+/// before setup spends anything, and returns each size's fee.
+fn plan_spend_sizes(
+    network_params: TxblastNetworkParams,
+    funded_key: &FundedKey,
+    address: &TransparentAddress,
+    tx_bytes: &[usize],
+    marginal_fee: u64,
+    tip: u32,
+) -> Result<Vec<SpendSize>> {
+    let plain = SpendSize {
+        target_bytes: None,
+        fee: transparent_fee(1, 1),
+    };
+    if tx_bytes.is_empty() {
+        return Ok(vec![plain]);
+    }
+    // The stand-in spends an output locked to the blaster's own P2PKH script.
+    let script_bytes = zcash_transparent::address::Script::from(address.script())
+        .0
+        .0;
+    let script = hex::encode(&script_bytes);
+    let stand_in = Lane {
+        id: 0,
+        txid: "11".repeat(32),
+        output_index: 0,
+        value: 1_000_000_000_000,
+    };
+    tx_bytes
+        .iter()
+        .map(|&target| {
+            if target == 0 {
+                return Ok(plain);
+            }
+            let size = SpendSize {
+                target_bytes: Some(target),
+                fee: 0,
+            };
+            let (_, bytes, change) = build_lane_spend(
+                network_params,
+                funded_key,
+                address,
+                &script,
+                &script_bytes,
+                &stand_in,
+                size,
+                marginal_fee,
+                tip,
+            )
+            .with_context(|| format!("--transparent-tx-bytes {target}"))?;
+            let fee = stand_in.value - change;
+            println!(
+                "[transparent] spend size target={target} bytes={} fee_zats={fee}",
+                bytes.len()
+            );
+            Ok(SpendSize { fee, ..size })
+        })
+        .collect()
 }
 
 /// Returns the blaster's key plus any distinct keys in `path`.
@@ -613,6 +762,36 @@ mod tests {
             dropped_spends(&pending, &pool, 10 + STALE_BLOCKS),
             vec!["evicted".to_string()]
         );
+    }
+
+    #[test]
+    fn spend_sizes_price_each_target_and_reject_sizes_without_room() {
+        let (key, address, _) = crate::txblast::transparent_sized::tests::key();
+        let plan = |sizes: &[usize]| {
+            plan_spend_sizes(
+                TxblastNetworkParams::LocalGenesis,
+                &key,
+                &address,
+                sizes,
+                5_000,
+                100,
+            )
+        };
+        let plain = plan(&[]).unwrap();
+        assert_eq!(plain.len(), 1);
+        assert_eq!(plain[0].target_bytes, None);
+        assert_eq!(plain[0].min_lane_value(), MIN_LANE_VALUE);
+
+        let mixed = plan(&[0, 300, 100_000]).unwrap();
+        assert_eq!(mixed[0].target_bytes, None);
+        assert_eq!(mixed[0].fee, transparent_fee(1, 1));
+        // ZIP 317 charges one action per 34 output bytes. The 300-byte spend's outputs
+        // take 4 actions; the 100,000-byte spend's take 2,937.
+        assert_eq!(mixed[1].fee, 4 * 5_000);
+        assert_eq!(mixed[2].fee, 2_937 * 5_000);
+        assert_eq!(mixed[2].min_lane_value(), mixed[2].fee + 10_000);
+
+        assert!(plan(&[100]).is_err());
     }
 
     #[test]
