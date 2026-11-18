@@ -40,8 +40,11 @@ pub struct Options {
     /// OP_RETURN bytes per self-spend (0 disables the output).
     #[arg(long, default_value_t = 23)]
     pub null_data_bytes: usize,
-    #[arg(long, default_value_t = 5)]
-    pub refresh_secs: u64,
+    /// Maximum unconfirmed reservations plus signing tasks; zero disables this cap.
+    #[arg(long, default_value_t = 0)]
+    pub max_pending_transactions: usize,
+    #[arg(long, default_value_t = 5.0)]
+    pub refresh_secs: f64,
     /// Exit after this many seconds; zero runs until interrupted.
     #[arg(long, default_value_t = 0)]
     pub duration_secs: u64,
@@ -393,7 +396,9 @@ pub async fn run(options: Options) -> Result<()> {
         options.null_data_bytes <= 80,
         "null-data-bytes must be <=80"
     );
-    ensure!(options.refresh_secs > 0, "refresh-secs must be positive");
+    let refresh_interval = Duration::try_from_secs_f64(options.refresh_secs)
+        .context("refresh-secs must be a finite non-negative duration")?;
+    ensure!(!refresh_interval.is_zero(), "refresh-secs must be positive");
     let minimum_input = transparent_builder::self_spend_fee(options.null_data_bytes)?
         + transparent_builder::MIN_OUTPUT_ZATS;
     let (key, _) = load_funded_key(options.funded_key_path.as_deref())?;
@@ -441,7 +446,7 @@ pub async fn run(options: Options) -> Result<()> {
     let started = Instant::now();
     let mut tick = tokio::time::interval(Duration::from_secs_f64(1.0 / f64::from(options.rate)));
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    let mut refresh = tokio::time::interval(Duration::from_secs(options.refresh_secs));
+    let mut refresh = tokio::time::interval(refresh_interval);
     refresh.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let stop = tokio::time::sleep(Duration::from_secs(if options.duration_secs == 0 {
         100 * 365 * 24 * 60 * 60
@@ -552,6 +557,13 @@ pub async fn run(options: Options) -> Result<()> {
                         submit(&client, tx.clone(), &mut submitting, &mut submitting_ids, &mut last_attempt);
                         continue;
                     }
+                }
+                let unconfirmed = pending.values().filter(|tx| {
+                    state.utxos.contains_key(&tx.input) || state.mempool.contains(&tx.txid)
+                }).count();
+                if options.max_pending_transactions != 0
+                    && unconfirmed + signing.len() >= options.max_pending_transactions {
+                    continue;
                 }
                 let deficit = options.lanes.saturating_sub(projected);
                 // Finish a fanout reservation before choosing the next fanout.
@@ -864,7 +876,8 @@ mod tests {
             lanes: 1,
             concurrency: 2,
             null_data_bytes: 80,
-            refresh_secs: 1,
+            max_pending_transactions: 0,
+            refresh_secs: 0.1,
             duration_secs: 1,
             trace: None,
         };
