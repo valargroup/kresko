@@ -240,9 +240,8 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::txblast::TxblastNetworkParams;
-    use crate::txblast::orchard::{
-        STANDARD_MARGINAL_FEE, TransparentInput, build_transparent_tx, transparent_fee,
-    };
+    use crate::txblast::orchard::builder::STANDARD_MARGINAL_FEE;
+    use crate::txblast::orchard::{TransparentInput, build_transparent_tx, transparent_fee};
 
     const SPENT_VALUE: u64 = 1_000_000_000;
 

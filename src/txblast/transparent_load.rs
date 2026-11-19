@@ -61,6 +61,10 @@ pub struct TransparentLoadConfig<'a> {
     pub tx_bytes: Vec<usize>,
     /// Zatoshis per ZIP 317 logical action that lane spends and lane splits pay.
     pub marginal_fee: u64,
+    /// Split the blaster's own UTXOs into lanes as they are, instead of shielding
+    /// mature coinbase first. Only for funds that aren't coinbase, such as a wallet's
+    /// send on a public network.
+    pub direct_funding: bool,
 }
 
 /// The spend one lane sends, and what it costs.
@@ -140,17 +144,21 @@ pub async fn run(
     )?;
     let size_of = |lane: &Lane| sizes[lane.id as usize % sizes.len()];
 
-    let sources = source_keys(funded_key, config.source_keys_path)?;
-    let fan_utxos = fund_fan_utxos(
-        &client,
-        network_params,
-        funded_key,
-        &address,
-        &sources,
-        config.lanes,
-        config.marginal_fee,
-    )
-    .await?;
+    let fan_utxos = if config.direct_funding {
+        own_fan_utxos(&client, funded_key).await?
+    } else {
+        let sources = source_keys(funded_key, config.source_keys_path)?;
+        fund_fan_utxos(
+            &client,
+            network_params,
+            funded_key,
+            &address,
+            &sources,
+            config.lanes,
+            config.marginal_fee,
+        )
+        .await?
+    };
     let script = lane_script(&client, funded_key).await?;
     let script_bytes = hex::decode(&script).context("lane script is not hex")?;
     let mut ready = split_into_lanes(
@@ -507,6 +515,29 @@ async fn fund_fan_utxos(
     Ok(fans)
 }
 
+/// Returns every confirmed UTXO at the blaster's address, largest first, as fan UTXOs.
+async fn own_fan_utxos(
+    client: &ZebraRpcClient,
+    funded_key: &FundedKey,
+) -> Result<Vec<(String, u32, u64)>> {
+    let mut fans: Vec<(String, u32, u64)> = client
+        .get_address_utxos(&funded_key.address.to_string())
+        .await?
+        .into_iter()
+        .map(|utxo| (utxo.txid, utxo.output_index, utxo.satoshis))
+        .collect();
+    if fans.is_empty() {
+        anyhow::bail!("{} holds no confirmed UTXOs to split", funded_key.address);
+    }
+    fans.sort_by(|a, b| b.2.cmp(&a.2));
+    println!(
+        "[transparent] splitting {} own UTXOs worth {} zats",
+        fans.len(),
+        fans.iter().map(|fan| fan.2).sum::<u64>(),
+    );
+    Ok(fans)
+}
+
 /// Splits each fan UTXO into up to [`FAN_OUTPUTS`] equal lanes, waits for every split
 /// to confirm, and returns the lanes. Stops once `lanes` lanes exist.
 #[allow(clippy::too_many_arguments)]
@@ -808,7 +839,7 @@ fn trace(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::txblast::orchard::STANDARD_MARGINAL_FEE;
+    use crate::txblast::orchard::builder::STANDARD_MARGINAL_FEE;
 
     fn in_flight(submitted_height: u32) -> InFlight {
         let lane = Lane {
