@@ -7,8 +7,8 @@ pub(crate) mod treasury;
 pub(crate) mod types;
 
 pub(crate) use builder::{
-    BuiltTx, MIN_NOTE_VALUE, ORCHARD_SPEND_FEE, OrchardKeys, ShieldingInput, TransparentInput,
-    build_and_send_orchard_fanout_tx, build_and_send_orchard_to_transparent_tx,
+    BuiltTx, MIN_NOTE_VALUE, ORCHARD_SPEND_FEE, OrchardKeys, STANDARD_MARGINAL_FEE, ShieldingInput,
+    TransparentInput, build_and_send_orchard_fanout_tx, build_and_send_orchard_to_transparent_tx,
     build_and_send_orchard_to_transparent_with_change_tx, build_and_send_shielding_tx,
     build_and_send_shielding_tx_multi, build_and_send_transparent_to_transparent_tx,
     build_lane_advance_tx, build_transparent_tx, decode_txblast_note_role, derive_orchard_keys,

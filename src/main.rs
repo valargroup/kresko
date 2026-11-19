@@ -519,7 +519,8 @@ enum Commands {
         #[arg(long, value_delimiter = ',')]
         transparent_tx_bytes: Vec<usize>,
 
-        /// Zatoshis per ZIP 317 logical action that sized transparent spends pay
+        /// Zatoshis per ZIP 317 logical action that transparent spends and lane splits
+        /// pay. Zakura nodes accept 400; Zebra and zcashd expect 5000.
         #[arg(long, default_value = "5000")]
         transparent_marginal_fee: u64,
     },

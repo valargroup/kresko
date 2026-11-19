@@ -38,7 +38,7 @@ zebrad = { package = "zakura", git = "https://github.com/zakura-core/zakura.git"
 zebra-jsonl-trace = { package = "zakura-jsonl-trace", git = "https://github.com/zakura-core/zakura.git", rev = "24eed5bc6f95fa2fbe15eb7db63d14a2ed771f10" }
 # The Common stack zakura uses (zakura#1093), so the transaction builder signs
 # with the NU7 consensus branch id the node enforces.
-zcash_primitives = { package = "zakura-primitives", features = ["transparent-inputs"], version = "=2.2.0" }
+zcash_primitives = { package = "zakura-primitives", features = ["transparent-inputs", "non-standard-fees"], version = "=2.2.0" }
 zcash_protocol = { package = "zakura-protocol", version = "=2.2.0" }
 zcash_address = { package = "zakura-address", version = "=2.2.0" }
 zcash_transparent = { package = "zakura-transparent", version = "=2.2.0" }

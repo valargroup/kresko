@@ -33,6 +33,8 @@ use crate::txblast::{TxblastNetworkParams, TxblastTraceConfig, local_target_heig
 const FAN_OUTPUTS: usize = 500;
 /// Least value a new lane is funded with.
 const MIN_LANE_VALUE: u64 = 20_000;
+/// Least change a lane spend leaves; a lane holding less retires.
+const MIN_CHANGE: u64 = 10_000;
 /// Times one signed spend is sent when the node's reply is lost or unreadable.
 const MAX_SUBMIT_ATTEMPTS: u32 = 3;
 /// Wait before resending the same signed bytes.
@@ -57,7 +59,7 @@ pub struct TransparentLoadConfig<'a> {
     /// Serialized sizes for lane spends, assigned to lanes in turn. Zero means a plain
     /// 1-in-1-out spend; empty sends only plain spends.
     pub tx_bytes: Vec<usize>,
-    /// Zatoshis per ZIP 317 logical action that sized spends pay.
+    /// Zatoshis per ZIP 317 logical action that lane spends and lane splits pay.
     pub marginal_fee: u64,
 }
 
@@ -70,9 +72,9 @@ struct SpendSize {
 }
 
 impl SpendSize {
-    /// The least a lane must hold to send this spend and keep a little change.
+    /// The least a lane must hold to send this spend and keep [`MIN_CHANGE`].
     fn min_lane_value(&self) -> u64 {
-        self.fee + MIN_LANE_VALUE - transparent_fee(1, 1)
+        self.fee + MIN_CHANGE
     }
 }
 
@@ -146,6 +148,7 @@ pub async fn run(
         &address,
         &sources,
         config.lanes,
+        config.marginal_fee,
     )
     .await?;
     let script = lane_script(&client, funded_key).await?;
@@ -158,6 +161,7 @@ pub async fn run(
         &script,
         fan_utxos,
         config.lanes,
+        config.marginal_fee,
         &tracer,
     )
     .await?;
@@ -333,7 +337,7 @@ fn build_lane_spend(
 ) -> Result<(String, Vec<u8>, u64)> {
     let plain_change = lane
         .value
-        .checked_sub(transparent_fee(1, 1))
+        .checked_sub(transparent_fee(1, 1, marginal_fee))
         .context("lane value cannot pay a plain spend's fee")?;
     let (txid, bytes) = build_transparent_tx(
         network_params,
@@ -346,6 +350,7 @@ fn build_lane_spend(
         }],
         &[(*address, plain_change)],
         local_target_height(tip, 1),
+        marginal_fee,
     )?;
     let Some(target_bytes) = size.target_bytes else {
         return Ok((txid, bytes, plain_change));
@@ -373,7 +378,7 @@ fn plan_spend_sizes(
 ) -> Result<Vec<SpendSize>> {
     let plain = SpendSize {
         target_bytes: None,
-        fee: transparent_fee(1, 1),
+        fee: transparent_fee(1, 1, marginal_fee),
     };
     if tx_bytes.is_empty() {
         return Ok(vec![plain]);
@@ -450,9 +455,11 @@ async fn fund_fan_utxos(
     address: &TransparentAddress,
     sources: &[FundedKey],
     lanes: usize,
+    marginal_fee: u64,
 ) -> Result<Vec<(String, u32, u64)>> {
     let fans_per_source = lanes.div_ceil(FAN_OUTPUTS).div_ceil(sources.len()).max(1);
-    let min_fan_value = transparent_fee(1, FAN_OUTPUTS) + FAN_OUTPUTS as u64 * MIN_LANE_VALUE;
+    let min_fan_value =
+        transparent_fee(1, FAN_OUTPUTS, marginal_fee) + FAN_OUTPUTS as u64 * MIN_LANE_VALUE;
     let tip = client.get_block_count().await?;
     let funding = futures::future::join_all(sources.iter().map(|source| async move {
         let utxos = select_spendable_treasury_utxos(client, source, tip, MAX_SOURCE_UTXOS).await?;
@@ -511,6 +518,7 @@ async fn split_into_lanes(
     script: &str,
     fans: Vec<(String, u32, u64)>,
     lanes: usize,
+    marginal_fee: u64,
     tracer: &OrchardTxblastTracer,
 ) -> Result<VecDeque<Lane>> {
     let tip = client.get_block_count().await?;
@@ -521,7 +529,7 @@ async fn split_into_lanes(
         if outputs == 0 {
             break;
         }
-        let spendable = value - transparent_fee(1, outputs);
+        let spendable = value - transparent_fee(1, outputs, marginal_fee);
         let each = spendable / outputs as u64;
         if each < MIN_LANE_VALUE {
             println!(
@@ -545,6 +553,7 @@ async fn split_into_lanes(
             }],
             &recipients,
             local_target_height(tip, 10),
+            marginal_fee,
         )?;
         client.send_raw_transaction(&hex::encode(&bytes)).await?;
         trace(
@@ -799,6 +808,7 @@ fn trace(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::txblast::orchard::STANDARD_MARGINAL_FEE;
 
     fn in_flight(submitted_height: u32) -> InFlight {
         let lane = Lane {
@@ -840,16 +850,17 @@ mod tests {
     #[test]
     fn spend_sizes_price_each_target_and_reject_sizes_without_room() {
         let (key, address, _) = crate::txblast::transparent_sized::tests::key();
-        let plan = |sizes: &[usize]| {
+        let plan_at = |sizes: &[usize], marginal_fee| {
             plan_spend_sizes(
                 TxblastNetworkParams::LocalGenesis,
                 &key,
                 &address,
                 sizes,
-                5_000,
+                marginal_fee,
                 100,
             )
         };
+        let plan = |sizes: &[usize]| plan_at(sizes, STANDARD_MARGINAL_FEE);
         let plain = plan(&[]).unwrap();
         assert_eq!(plain.len(), 1);
         assert_eq!(plain[0].target_bytes, None);
@@ -857,7 +868,7 @@ mod tests {
 
         let mixed = plan(&[0, 300, 100_000]).unwrap();
         assert_eq!(mixed[0].target_bytes, None);
-        assert_eq!(mixed[0].fee, transparent_fee(1, 1));
+        assert_eq!(mixed[0].fee, transparent_fee(1, 1, STANDARD_MARGINAL_FEE));
         // ZIP 317 charges one action per 34 output bytes. The 300-byte spend's outputs
         // take 4 actions; the 100,000-byte spend's take 2,937.
         assert_eq!(mixed[1].fee, 4 * 5_000);
@@ -865,6 +876,11 @@ mod tests {
         assert_eq!(mixed[2].min_lane_value(), mixed[2].fee + 10_000);
 
         assert!(plan(&[100]).is_err());
+
+        // Zakura nodes accept 400 zatoshis per action, so a plain spend pays 800.
+        let cheap = plan_at(&[0, 300], 400).unwrap();
+        assert_eq!(cheap[0].fee, 800);
+        assert_eq!(cheap[1].fee, 4 * 400);
     }
 
     #[test]
