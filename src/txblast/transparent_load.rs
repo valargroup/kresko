@@ -515,6 +515,26 @@ async fn fund_fan_utxos(
     Ok(fans)
 }
 
+/// Splits `value` into at most `wanted` lane values of at least [`MIN_LANE_VALUE`]
+/// each, leaving exactly the split's fee, or `None` if it can't fund one lane.
+fn lane_values(value: u64, wanted: usize, marginal_fee: u64) -> Option<Vec<u64>> {
+    // Each lane past the grace actions costs its value plus one action's fee.
+    let affordable = value / (MIN_LANE_VALUE + marginal_fee);
+    let outputs = wanted.min(usize::try_from(affordable).unwrap_or(usize::MAX));
+    if outputs == 0 {
+        return None;
+    }
+    let spendable = value.checked_sub(transparent_fee(1, outputs, marginal_fee))?;
+    let each = spendable / outputs as u64;
+    if each < MIN_LANE_VALUE {
+        return None;
+    }
+    // The first output takes the remainder, so outputs plus fee equal the input exactly.
+    let mut values = vec![each; outputs];
+    values[0] += spendable - each * outputs as u64;
+    Some(values)
+}
+
 /// Returns every confirmed UTXO at the blaster's address, largest first, as fan UTXOs.
 async fn own_fan_utxos(
     client: &ZebraRpcClient,
@@ -538,8 +558,8 @@ async fn own_fan_utxos(
     Ok(fans)
 }
 
-/// Splits each fan UTXO into up to [`FAN_OUTPUTS`] equal lanes, waits for every split
-/// to confirm, and returns the lanes. Stops once `lanes` lanes exist.
+/// Splits each fan UTXO into as many lanes as it affords, up to [`FAN_OUTPUTS`], waits
+/// for every split to confirm, and returns the lanes. Stops once `lanes` lanes exist.
 #[allow(clippy::too_many_arguments)]
 async fn split_into_lanes(
     client: &ZebraRpcClient,
@@ -556,21 +576,14 @@ async fn split_into_lanes(
     let mut created: VecDeque<Lane> = VecDeque::new();
     let mut waiting: HashSet<String> = HashSet::new();
     for (txid, output_index, value) in fans {
-        let outputs = (lanes - created.len()).min(FAN_OUTPUTS);
-        if outputs == 0 {
+        let wanted = (lanes - created.len()).min(FAN_OUTPUTS);
+        if wanted == 0 {
             break;
         }
-        let spendable = value - transparent_fee(1, outputs, marginal_fee);
-        let each = spendable / outputs as u64;
-        if each < MIN_LANE_VALUE {
-            println!(
-                "[transparent] fan UTXO {txid}:{output_index} is too small for {outputs} lanes"
-            );
+        let Some(values) = lane_values(value, wanted, marginal_fee) else {
+            println!("[transparent] fan UTXO {txid}:{output_index} is too small for one lane");
             continue;
-        }
-        // The first output takes the remainder, so outputs plus fee equal the input exactly.
-        let mut values = vec![each; outputs];
-        values[0] += spendable - each * outputs as u64;
+        };
         let recipients: Vec<(TransparentAddress, u64)> =
             values.iter().map(|v| (*address, *v)).collect();
         let (split_txid, bytes) = build_transparent_tx(
@@ -912,6 +925,22 @@ mod tests {
         let cheap = plan_at(&[0, 300], 400).unwrap();
         assert_eq!(cheap[0].fee, 800);
         assert_eq!(cheap[1].fee, 4 * 400);
+    }
+
+    #[test]
+    fn a_small_fan_utxo_funds_the_lanes_it_affords() {
+        // Two 6,000,000-zat UTXOs can't each fund 500 lanes, but each funds 294.
+        let values = lane_values(6_000_000, 500, 400).unwrap();
+        assert_eq!(values.len(), 294);
+        assert!(values.iter().all(|&v| v >= MIN_LANE_VALUE));
+        assert_eq!(
+            values.iter().sum::<u64>() + transparent_fee(1, 294, 400),
+            6_000_000
+        );
+        // A UTXO below one lane's value and fee is skipped instead of underflowing.
+        assert_eq!(lane_values(500, 500, 400), None);
+        assert_eq!(lane_values(MIN_LANE_VALUE, 1, 400), None);
+        assert_eq!(lane_values(1_000_000_000, 500, 400).unwrap().len(), 500);
     }
 
     #[test]
