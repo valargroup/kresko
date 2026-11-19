@@ -519,9 +519,15 @@ enum Commands {
         #[arg(long, value_delimiter = ',')]
         transparent_tx_bytes: Vec<usize>,
 
-        /// Zatoshis per ZIP 317 logical action that sized transparent spends pay
+        /// Zatoshis per ZIP 317 logical action that transparent spends and lane splits
+        /// pay. Zakura nodes accept 400; Zebra and zcashd expect 5000.
         #[arg(long, default_value = "5000")]
         transparent_marginal_fee: u64,
+
+        /// Split the funded key's own UTXOs into lanes directly, skipping the coinbase
+        /// shield step. For a key funded by a wallet send, such as on public Testnet
+        #[arg(long)]
+        transparent_direct_funding: bool,
     },
 
     /// Fund runtime keys locally from the cached bootstrap treasury (intended to run on remote nodes)
@@ -1553,6 +1559,7 @@ async fn main() -> Result<()> {
             transparent_source_keys,
             transparent_tx_bytes,
             transparent_marginal_fee,
+            transparent_direct_funding,
         } => {
             txblast::run_local(
                 &rpc_endpoint,
@@ -1581,6 +1588,7 @@ async fn main() -> Result<()> {
                     source_keys_path: transparent_source_keys.as_deref(),
                     tx_bytes: transparent_tx_bytes,
                     marginal_fee: transparent_marginal_fee,
+                    direct_funding: transparent_direct_funding,
                 },
             )
             .await?;

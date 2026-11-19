@@ -240,6 +240,7 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::txblast::TxblastNetworkParams;
+    use crate::txblast::orchard::builder::STANDARD_MARGINAL_FEE;
     use crate::txblast::orchard::{TransparentInput, build_transparent_tx, transparent_fee};
 
     const SPENT_VALUE: u64 = 1_000_000_000;
@@ -273,8 +274,12 @@ pub(crate) mod tests {
                 script: &hex::encode(script),
                 value: SPENT_VALUE,
             }],
-            &[(address, SPENT_VALUE - transparent_fee(1, 1))],
+            &[(
+                address,
+                SPENT_VALUE - transparent_fee(1, 1, STANDARD_MARGINAL_FEE),
+            )],
             100,
+            STANDARD_MARGINAL_FEE,
         )
         .unwrap()
         .1

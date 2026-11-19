@@ -694,25 +694,30 @@ pub(crate) struct TransparentInput<'a> {
     pub(crate) value: u64,
 }
 
-/// ZIP-317 fee for a transaction with only P2PKH inputs and outputs.
+/// ZIP-317's conventional marginal fee, in zatoshis per logical action.
+pub(crate) const STANDARD_MARGINAL_FEE: u64 = 5_000;
+
+/// Fee for a transaction with only P2PKH inputs and outputs, at `marginal_fee`
+/// zatoshis per ZIP-317 logical action.
 ///
 /// ZIP-317 counts the larger of the input and output counts, not their sum, so this
 /// differs from [`zip317_fee`] once both sides pass the two-action grace.
-pub(crate) fn transparent_fee(inputs: usize, outputs: usize) -> u64 {
-    const MARGINAL_FEE: u64 = 5_000;
-    MARGINAL_FEE * std::cmp::max(2, std::cmp::max(inputs, outputs)) as u64
+pub(crate) fn transparent_fee(inputs: usize, outputs: usize, marginal_fee: u64) -> u64 {
+    marginal_fee * std::cmp::max(zip317::GRACE_ACTIONS, std::cmp::max(inputs, outputs)) as u64
 }
 
 /// Builds and signs a transaction spending `inputs` owned by `funded_key` to P2PKH
 /// `outputs`, and returns its txid and serialized bytes.
 ///
-/// The inputs must exceed the outputs by exactly [`transparent_fee`], or the build fails.
+/// The inputs must exceed the outputs by exactly [`transparent_fee`] at
+/// `marginal_fee`, or the build fails.
 pub(crate) fn build_transparent_tx(
     network_params: TxblastNetworkParams,
     funded_key: &FundedKey,
     inputs: &[TransparentInput<'_>],
     outputs: &[(TransparentAddress, u64)],
     target_height: u32,
+    marginal_fee: u64,
 ) -> Result<(String, Vec<u8>)> {
     let build_config = BuildConfig::Standard {
         sapling_anchor: None,
@@ -741,7 +746,13 @@ pub(crate) fn build_transparent_tx(
     let mut signing_set = TransparentSigningSet::new();
     signing_set.add_key(funded_key.secret_key);
 
-    let fee_rule = zip317::FeeRule::standard();
+    let fee_rule = zip317::FeeRule::non_standard(
+        Zatoshis::from_u64(marginal_fee).context("invalid marginal fee")?,
+        zip317::GRACE_ACTIONS,
+        zip317::P2PKH_STANDARD_INPUT_SIZE,
+        zip317::P2PKH_STANDARD_OUTPUT_SIZE,
+    )
+    .expect("the standard P2PKH sizes are nonzero");
     let result = builder
         .build(
             &signing_set,
@@ -794,6 +805,7 @@ pub(crate) async fn build_and_send_transparent_to_transparent_tx(
         }],
         &[(*recipient, recipient_value)],
         target_height,
+        STANDARD_MARGINAL_FEE,
     )?;
     client.send_raw_transaction(&hex::encode(&tx_bytes)).await
 }
@@ -1277,9 +1289,10 @@ mod tests {
 
     #[test]
     fn transparent_fee_counts_the_larger_side() {
-        assert_eq!(transparent_fee(1, 1), 10_000);
-        assert_eq!(transparent_fee(1, 500), 2_500_000);
-        assert_eq!(transparent_fee(3, 2), 15_000);
+        assert_eq!(transparent_fee(1, 1, STANDARD_MARGINAL_FEE), 10_000);
+        assert_eq!(transparent_fee(1, 500, STANDARD_MARGINAL_FEE), 2_500_000);
+        assert_eq!(transparent_fee(3, 2, STANDARD_MARGINAL_FEE), 15_000);
+        assert_eq!(transparent_fee(1, 1, 400), 800);
     }
 
     fn test_cfg() -> OrchardBlastRuntimeConfig {
